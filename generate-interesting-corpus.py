@@ -170,6 +170,12 @@ def corpus_seeds():
         b'<D:propfind xmlns:D="DAV:"><D:prop><D:lockdiscovery/>'
         b'<D:supportedlock/></D:prop></D:propfind>'
     )
+    balancer_manager_body = (
+        b"b=managed&w=http%3A%2F%2F%5B%3A%3A1%5D%3A6827&nonce=fuzz"
+        b"&w_lf=1.25&w_ls=1&w_wr=one&w_status_I=0&w_status_N=0"
+        b"&w_status_D=0&b_lbm=byrequests&b_tmo=1&b_max=2&b_sforce=0"
+        b"&b_ss=FUZZROUTE&xml=1"
+    )
 
     return {
         "seed-get-index": raw(get),
@@ -454,6 +460,103 @@ def corpus_seeds():
         "seed-autoindex-query": multipacket(
             request("GET", "/?C=N;O=D;F=0;V=1;P=*.txt"),
             request("GET", "/?C=S;O=A;F=2;V=0;P=%5Bfuzz%5D*"), flags=0x07),
+        "seed-authz-providers": multipacket(
+            request("GET", "/auth/anon", (
+                "Authorization: Basic YW5vbnltb3VzOmZ1enpAZXhhbXBsZS5jb20=",)),
+            request("GET", "/auth/anon", (
+                "Authorization: Basic ZnRwOm5vdC1hbi1lbWFpbA==",)),
+            request("GET", "/auth/group", (
+                "Authorization: Basic YWRtaW46ZnV6eg==",)),
+            request("GET", "/auth/owner", (
+                "Authorization: Basic YWRtaW46ZnV6eg==",)), flags=0x07),
+        "seed-buffer-filter-pipeline": multipacket(
+            request("POST", "/buffer", (
+                "Content-Type: application/octet-stream", "Content-Length: 65",
+                "X-Fuzz-Reflect: one", "X-Fuzz-Echo: two")),
+            b"A" * 31, b"B" * 2, b"C" * 32, flags=0x02),
+        "seed-rate-limit-output": multipacket(
+            request("GET", "/rate/large.txt", ("Range: bytes=0-31,4095-4097",)),
+            request("HEAD", "/rate/large.txt", ("Accept-Encoding: identity",)),
+            flags=0x07),
+        "seed-ext-filter-lifecycle": multipacket(
+            request("POST", "/ext/in", (
+                "Content-Type: application/octet-stream", "Content-Length: 33")),
+            b"fuzz-ext-input-" + b"x" * 18,
+            request("GET", "/ext/out/index.txt", ("Accept: application/octet-stream",)),
+            flags=0x02),
+        "seed-vhost-userdir": multipacket(
+            b"GET /index.txt HTTP/1.1\r\nHost: blue.vhost.fuzz.test\r\n\r\n",
+            b"GET /~fuzz/index.txt HTTP/1.1\r\nHost: users.fuzz.test\r\n\r\n",
+            b"GET /~missing/%2e%2e/index.txt HTTP/1.1\r\n"
+            b"Host: users.fuzz.test:5824\r\n\r\n", flags=0x07),
+        "seed-rewrite-map-matrix": multipacket(
+            request("GET", "/map/txt/hit"),
+            request("GET", "/map/txt/missing"),
+            request("GET", "/map/dbm/dbm"),
+            request("GET", "/map/int/FUZZ.TXT"),
+            request("GET", "/map/escape/a%20b%3fc"), flags=0x07),
+        "seed-proxy-express-hosts": multipacket(
+            b"GET /index.txt HTTP/1.1\r\nHost: express.fuzz.test\r\n\r\n",
+            b"GET http://express.fuzz.test/index.txt HTTP/1.1\r\n"
+            b"Host: blue.express.fuzz.test\r\n\r\n",
+            b"GET /missing HTTP/1.1\r\nHost: missing.express.fuzz.test:5826\r\n\r\n",
+            flags=0x07),
+        "seed-balancer-methods": multipacket(
+            request("GET", "/traffic/index.txt", ("Cookie: FUZZROUTE=.one",)),
+            request("GET", "/traffic/index.txt", ("Cookie: FUZZROUTE=.two",)),
+            request("GET", "/busy/index.txt"),
+            request("GET", "/busy/missing?repeat=1"), flags=0x07),
+        "seed-balancer-manager": multipacket(
+            request("GET", "/balancer-manager?b=managed&xml=1"),
+            request("GET", "/balancer-manager?b=managed&w=bad%3A%2F%2Fvalue&dw=1", (
+                "Referer: http://localhost/balancer-manager",)),
+            request("POST", "/balancer-manager", (
+                "Content-Type: application/x-www-form-urlencoded",
+                f"Content-Length: {len(balancer_manager_body)}",
+                "Referer: http://localhost/balancer-manager"),
+                balancer_manager_body), flags=0x07),
+        "seed-error-subrequests": multipacket(
+            request("GET", "/missing/error-document"),
+            request("PUT", "/index.txt", ("Content-Length: 0",)),
+            request("GET", "/fallback-zone/missing/path/info"),
+            request("GET", "/fallback-zone/subdir"),
+            request("GET", "/fallback-zone/subdir/"), flags=0x07),
+        "seed-cache-policy-lock": multipacket(
+            request("GET", "/cache-policy/index.txt?session=one", (
+                "Cache-Control: private, no-store",)),
+            request("GET", "/cache-policy/index.txt?session=two", (
+                "Cache-Control: only-if-cached, max-stale=999999",)),
+            request("GET", "/cache-policy/index.txt", (
+                "Range: bytes=0-0", "If-None-Match: \"fuzz-policy\"")), flags=0x07),
+        "seed-proxy-response-rewrite": multipacket(
+            b"GET /response/redirect HTTP/1.1\r\nHost: frontend.fuzz.test\r\n\r\n",
+            b"GET /response/error/fuzz HTTP/1.1\r\nHost: frontend.fuzz.test\r\n\r\n",
+            b"GET /response/destination/index.txt HTTP/1.1\r\n"
+            b"Host: frontend.fuzz.test\r\nCookie: id=fuzz\r\n"
+            b"Range: bytes=0-3\r\n\r\n", flags=0x07),
+        "seed-data-filter-lengths": multipacket(
+            request("GET", "/data/length-0.txt"),
+            request("GET", "/data/length-1.bin"),
+            request("GET", "/data/length-2.txt"),
+            request("GET", "/data/length-3.bin"),
+            request("GET", "/data/length-5999.txt"),
+            request("GET", "/data/length-6000.txt"),
+            request("GET", "/data/length-6001.bin"), flags=0x07),
+        "seed-imagemap-coordinates": multipacket(
+            request("GET", "/shapes.map?10,20"),
+            request("GET", "/shapes.map?"),
+            request("GET", "/shapes.map?-2147483648,2147483647"),
+            request("GET", "/shapes.map?nan,1e309"), flags=0x07),
+        "seed-charset-translate": multipacket(
+            request("POST", "/charset", (
+                "Content-Type: text/plain; charset=UTF-8", "Content-Length: 8"),
+                b"fuzz\xc2\xa3\xc3\xa9"),
+            request("POST", "/charset", (
+                "Transfer-Encoding: chunked", "Content-Type: text/plain; charset=UTF-8"),
+                b"1\r\n\xc2\r\n1\r\n\xa3\r\n0\r\n\r\n"),
+            request("POST", "/charset", (
+                "Transfer-Encoding: chunked", "Content-Type: text/plain; charset=UTF-8"),
+                b"1\r\n\xff\r\n0\r\n\r\n"), flags=0x07),
     }
 
 

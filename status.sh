@@ -2,6 +2,7 @@
 set -u
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+MAX_CONFIG=32
 CONFIG="all"
 
 for arg in "$@"; do
@@ -10,7 +11,8 @@ for arg in "$@"; do
         CONFIG="${arg#*=}"
         ;;
     --help | -h)
-        echo "Usage: ./status.sh [--config=N|all]"
+        echo "Usage: ./status.sh [--config=N|a|all]"
+        echo "  N selects one configuration from 1-$MAX_CONFIG."
         exit 0
         ;;
     *)
@@ -20,7 +22,10 @@ for arg in "$@"; do
     esac
 done
 
-config_ids=({1..20})
+config_ids=()
+for ((config_id = 1; config_id <= MAX_CONFIG; config_id++)); do
+    config_ids+=("$config_id")
+done
 
 if [ "$CONFIG" != "all" ] && [ "$CONFIG" != "a" ]; then
     found=0

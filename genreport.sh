@@ -2,10 +2,11 @@
 set -euo pipefail
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+MAX_CONFIG=32
 source "$directory/toolchain/use-llvm.sh"
 
 usage() {
-    echo "Usage: ./genreport.sh [PROFILE_SESSION BUILD_CONFIG]"
+    echo "Usage: ./genreport.sh [PROFILE_SESSION BUILD_CONFIG|a|all]"
     echo "With no arguments, report every config in the latest completed session."
     echo "Example: ./genreport.sh logs/profiles/20260912T190000Z-1234 12"
     exit 1
@@ -21,8 +22,9 @@ report_config() {
     local profile
     local profiles
 
-    if [[ ! "$build_config" =~ ^([1-9]|1[0-9]|20)$ ]]; then
-        echo "Build config must be 1-20."
+    if [[ ! "$build_config" =~ ^[1-9][0-9]*$ ]] ||
+            [ "$build_config" -lt 1 ] || [ "$build_config" -gt "$MAX_CONFIG" ]; then
+        echo "Build config must be 1-$MAX_CONFIG."
         exit 1
     fi
     if [ ! -x "$binary" ]; then
@@ -55,17 +57,10 @@ report_config() {
     echo "Coverage report: $report_dir/coverage.txt"
 }
 
-if [ "$#" -eq 0 ]; then
-    mapfile -t completed_sessions < <(
-        find "$directory/logs/profiles" -mindepth 2 -maxdepth 2 -type f \
-            -name .complete -printf '%h\n' | sort -r
-    )
-    profile_session="${completed_sessions[0]:-}"
-
-    if [ -z "$profile_session" ]; then
-        echo "No completed profile session found."
-        exit 1
-    fi
+report_all_configs() {
+    local profile_session="$1"
+    local config
+    local configs
 
     mapfile -t configs < <(
         find "$profile_session" -mindepth 1 -maxdepth 1 -type d -name 'run_*' \
@@ -78,8 +73,28 @@ if [ "$#" -eq 0 ]; then
     for config in "${configs[@]}"; do
         report_config "$profile_session" "$config"
     done
+}
+
+if [ "$#" -eq 0 ]; then
+    mapfile -t completed_sessions < <(
+        find "$directory/logs/profiles" -mindepth 2 -maxdepth 2 -type f \
+            -name .complete -printf '%h\n' | sort -r
+    )
+    profile_session="${completed_sessions[0]:-}"
+
+    if [ -z "$profile_session" ]; then
+        echo "No completed profile session found."
+        exit 1
+    fi
+
+    report_all_configs "$profile_session"
 elif [ "$#" -eq 2 ]; then
-    report_config "$(realpath "$1")" "$2"
+    profile_session="$(realpath "$1")"
+    if [ "$2" = a ] || [ "$2" = all ]; then
+        report_all_configs "$profile_session"
+    else
+        report_config "$profile_session" "$2"
+    fi
 else
     usage
 fi

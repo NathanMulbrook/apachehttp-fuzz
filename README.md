@@ -18,7 +18,7 @@ headers are required.
 ./run.sh -c=1
 ```
 
-`-c=a` or `-c=all` selects all 20 builds. `-r` reinstalls an existing build,
+`-c=a` or `-c=all` selects all 32 builds. `-r` reinstalls an existing build,
 `-p` leaves out the fuzz module, and `-j` uses four build jobs. As in the 389
 interface, `run.sh --fuzz` runs the server without starting libFuzzer.
 Add `--multiprocess` (or `-m`) to start three Apache worker processes. The
@@ -40,10 +40,11 @@ Byte zero is a flag byte:
 
 With bit 1 clear, bytes 1 onward are sent as one packet. With it set, the rest
 is a sequence of `uint16` big-endian nonzero length followed by that many raw
-bytes. Inputs may contain at most 64 packets. The generated corpus contains 69
+bytes. Inputs may contain at most 64 packets. The generated corpus contains 84
 deterministic seeds for parser boundaries, pipelining, chunked bodies, request
 smuggling boundaries, form auth and sessions, DAV, native proxy protocols,
-filters, caches, CGI/SSI, h2c control frames, WebSockets, and TLS variants. The
+filters, caches, CGI/SSI, h2c control frames, WebSockets, TLS variants, authz,
+translation maps, balancers, error subrequests, and character conversion. The
 chunked seeds bracket the signed `apr_off_t` limit, cover the separate width
 rejection, and retain valid extension and trailer syntax; focused TRACE and
 ALPN seeds cover chunked TRACE bodies, header enumeration, `Max-Forwards`
@@ -84,10 +85,24 @@ standard raw/framed flag variants. Both corpus tools are idempotent.
 | 18 | threaded h2c, push, WebSockets, and control frames | worker |
 | 19 | prefork DAV, rewrite, and HTTP/0.9 | prefork |
 | 20 | combined h2c, rewrite, cache, filters, HTTP/AJP/FCGI/SCGI/UWSGI proxy | event |
+| 21 | anonymous/file authentication and group/file-owner authorization | event |
+| 22 | buffered request/response bodies, reflector headers, and rate limiting | event |
+| 23 | isolated external input/output filter process lifecycle | prefork |
+| 24 | name-based virtual hosts, virtual document roots, and user directories | event |
+| 25 | text, SDBM, lowercase, and escaping rewrite maps | event |
+| 26 | DBM-driven local dynamic reverse proxying | event |
+| 27 | by-traffic/by-busyness balancers and isolated balancer management | event |
+| 28 | error documents, SSI subrequests, fallback resources, and redirects | event |
+| 29 | cache locks, cache-control policy, headers, and query-key handling | event |
+| 30 | reverse-proxy Location, cookie, and error-response rewriting | event |
+| 31 | data output filtering and imagemap coordinate parsing | event |
+| 32 | ISO-8859-1 to UTF-8 reflector input/output conversion | event |
 
 Each config listens on `[::1]:5800+N`; local proxy backends use
 `[::1]:6800+N`. The forward proxy denies every destination except its matching
 loopback backend, so mutated inputs cannot make outbound proxy connections.
+Config 23 launches one local filter process for each filtered request and may be
+substantially slower than the in-process personalities.
 
 ## Apache process model
 

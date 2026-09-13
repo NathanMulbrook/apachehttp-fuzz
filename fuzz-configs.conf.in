@@ -1,4 +1,4 @@
-# The same broad static module build is exercised through twenty runtime
+# The same broad static module build is exercised through thirty-two runtime
 # personalities. Each installed run_N tree selects exactly one block.
 
 <IfDefine FUZZ_CONFIG_1>
@@ -277,4 +277,222 @@
     <VirtualHost [::1]:@BACKEND_PORT@>
         DocumentRoot "@RUN_DIR@/htdocs"
     </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_21>
+    <Location /auth/anon>
+        AuthType Basic
+        AuthName "fuzz-anon"
+        AuthBasicProvider anon
+        Anonymous anonymous ftp
+        Anonymous_MustGiveEmail On
+        Anonymous_VerifyEmail On
+        Anonymous_LogEmail Off
+        Require valid-user
+    </Location>
+    <Location /auth/group>
+        AuthType Basic
+        AuthName "fuzz-group"
+        AuthBasicProvider file
+        AuthUserFile "@RUN_DIR@/conf/users"
+        AuthGroupFile "@RUN_DIR@/conf/groups"
+        Require group fuzzers
+    </Location>
+    <Location /auth/owner>
+        AuthType Basic
+        AuthName "fuzz-owner"
+        AuthBasicProvider file
+        AuthUserFile "@RUN_DIR@/conf/users"
+        Require file-owner
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_22>
+    <Location /buffer>
+        SetHandler reflector
+        SetInputFilter BUFFER
+        SetOutputFilter BUFFER
+        BufferSize 32
+        KeptBodySize 65536
+        ReflectorHeader X-Fuzz-Reflect X-Fuzz-Echo
+    </Location>
+    <Location /rate>
+        SetOutputFilter RATE_LIMIT
+        SetEnv rate-limit 1048576
+        SetEnv rate-initial-burst 4096
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_23>
+    ExtFilterDefine fuzz-in mode=input intype=application/octet-stream cmd="@RUN_DIR@/conf/filter.sh"
+    ExtFilterDefine fuzz-out mode=output outtype=application/octet-stream cmd="@RUN_DIR@/conf/filter.sh"
+    <Location /ext/in>
+        SetHandler reflector
+        SetInputFilter fuzz-in
+        ExtFilterOptions LogStderr Onfail=abort
+    </Location>
+    <Location /ext/out>
+        SetOutputFilter fuzz-out
+        ExtFilterOptions LogStderr Onfail=remove
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_24>
+    <VirtualHost [::1]:@PORT@>
+        ServerName dynamic.fuzz.test
+        ServerAlias *.vhost.fuzz.test
+        VirtualDocumentRoot "@RUN_DIR@/vhosts/%0/htdocs"
+        <Directory "@RUN_DIR@/vhosts">
+            Require all granted
+        </Directory>
+    </VirtualHost>
+    <VirtualHost [::1]:@PORT@>
+        ServerName users.fuzz.test
+        UserDir "@RUN_DIR@/userdirs/*"
+        <Directory "@RUN_DIR@/userdirs">
+            Require all granted
+        </Directory>
+    </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_25>
+    RewriteEngine On
+    RewriteMap fuzz_txt "txt:@RUN_DIR@/conf/rewrite-map.txt"
+    RewriteMap fuzz_dbm "dbm=sdbm:@RUN_DIR@/conf/rewrite-map.dbm"
+    RewriteMap fuzz_lower "int:tolower"
+    RewriteMap fuzz_escape "int:escape"
+    RewriteRule "^/map/txt/([^/]*)$" "${fuzz_txt:$1|/mapped/miss.txt}" [END]
+    RewriteRule "^/map/dbm/([^/]*)$" "${fuzz_dbm:$1|/mapped/miss.txt}" [END]
+    RewriteRule "^/map/int/(.*)$" "/mapped/${fuzz_lower:$1}" [END,NE]
+    RewriteRule "^/map/escape/(.*)$" "/mapped/${fuzz_escape:$1}" [END]
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_26>
+    Listen [::1]:@BACKEND_PORT@
+    <VirtualHost [::1]:@PORT@>
+        ServerName express.fuzz.test
+        ServerAlias *.express.fuzz.test
+        ProxyRequests Off
+        ProxyExpressEnable On
+        ProxyExpressDBMFile "@RUN_DIR@/conf/express-map.dbm"
+        ProxyExpressDBMType sdbm
+    </VirtualHost>
+    <VirtualHost [::1]:@BACKEND_PORT@>
+        ServerName backend.express.fuzz.test
+        DocumentRoot "@RUN_DIR@/htdocs/backend"
+    </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_27>
+    Listen [::1]:@BACKEND_PORT@
+    Listen [::1]:@BACKEND2_PORT@
+    ProxyRequests Off
+    <Proxy "balancer://traffic">
+        BalancerMember "http://[::1]:@BACKEND_PORT@" route=one
+        BalancerMember "http://[::1]:@BACKEND2_PORT@" route=two
+        ProxySet lbmethod=bytraffic stickysession=FUZZROUTE
+    </Proxy>
+    <Proxy "balancer://busy">
+        BalancerMember "http://[::1]:@BACKEND_PORT@" route=one
+        BalancerMember "http://[::1]:@BACKEND2_PORT@" route=two
+        ProxySet lbmethod=bybusyness
+    </Proxy>
+    <Proxy "balancer://managed">
+        BalancerMember "http://[::1]:@BACKEND_PORT@" route=one
+        BalancerMember "http://[::1]:@BACKEND2_PORT@" route=two
+        ProxySet nonce=fuzz
+    </Proxy>
+    ProxyPass /traffic/ balancer://traffic/
+    ProxyPass /busy/ balancer://busy/
+    <Location /balancer-manager>
+        SetHandler balancer-manager
+        Require all granted
+    </Location>
+    <VirtualHost [::1]:@BACKEND_PORT@>
+        DocumentRoot "@RUN_DIR@/htdocs/backend"
+    </VirtualHost>
+    <VirtualHost [::1]:@BACKEND2_PORT@>
+        DocumentRoot "@RUN_DIR@/htdocs/backend"
+    </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_28>
+    ErrorDocument 400 /errors/400.shtml
+    ErrorDocument 404 /errors/404.shtml
+    ErrorDocument 405 /errors/405.shtml
+    AddOutputFilter INCLUDES .shtml
+    Alias /errors/ "@RUN_DIR@/htdocs/errors/"
+    Alias /fallback-zone/ "@RUN_DIR@/htdocs/fallback-zone/"
+    <Directory "@RUN_DIR@/htdocs/errors">
+        Options Includes
+        Require all granted
+    </Directory>
+    <Directory "@RUN_DIR@/htdocs/fallback-zone">
+        FallbackResource /fallback.shtml
+        DirectoryIndex index.shtml
+        DirectoryIndexRedirect 307
+        AcceptPathInfo On
+        Options Includes
+        Require all granted
+    </Directory>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_29>
+    CacheRoot "@RUN_DIR@/logs/cache-policy"
+    CacheEnable disk /cache-policy/
+    CacheQuickHandler On
+    CacheLock On
+    CacheLockPath "@RUN_DIR@/logs/cache-lock"
+    CacheLockMaxAge 1
+    CacheHeader On
+    CacheDetailHeader On
+    CacheIgnoreCacheControl On
+    CacheStorePrivate On
+    CacheStoreNoStore On
+    CacheIgnoreHeaders Set-Cookie
+    CacheIgnoreQueryString On
+    ExpiresActive On
+    ExpiresDefault "access plus 5 seconds"
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_30>
+    Listen [::1]:@BACKEND_PORT@
+    <VirtualHost [::1]:@PORT@>
+        ServerName frontend.fuzz.test
+        ProxyRequests Off
+        ProxyPass /response/ http://[::1]:@BACKEND_PORT@/
+        ProxyPassReverse /response/ http://[::1]:@BACKEND_PORT@/
+        ProxyPassReverseCookieDomain backend.fuzz.test frontend.fuzz.test
+        ProxyPassReverseCookiePath /backend/ /response/
+        ProxyErrorOverride On 404 500 503
+    </VirtualHost>
+    <VirtualHost [::1]:@BACKEND_PORT@>
+        ServerName backend.fuzz.test
+        DocumentRoot "@RUN_DIR@/htdocs/backend-response"
+        Header always set Set-Cookie "id=fuzz; Path=/backend/; Domain=backend.fuzz.test"
+        Redirect 302 /redirect http://[::1]:@BACKEND_PORT@/destination/
+        RewriteEngine On
+        RewriteRule ^/error/(.*)$ - [R=503,L]
+    </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_31>
+    <Location /data/>
+        SetOutputFilter DATA
+    </Location>
+    AddHandler imap-file .map
+    <Files "shapes.map">
+        ImapMenu formatted
+        ImapDefault menu
+        ImapBase map
+    </Files>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_32>
+    <Location /charset>
+        SetHandler reflector
+        CharsetSourceEnc ISO-8859-1
+        CharsetDefault UTF-8
+        CharsetOptions TranslateAllMimeTypes
+    </Location>
 </IfDefine>

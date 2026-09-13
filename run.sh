@@ -3,6 +3,7 @@ set -u
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$directory" || exit 1
+MAX_CONFIG=32
 FUZZ=""
 CONFIG="all"
 LOG_OUTPUT=1
@@ -27,20 +28,20 @@ for arg in "$@"; do
         LOG_OUTPUT=0
         ;;
     --help | -h)
-        echo "Usage: ./run.sh [--fuzz] [--packet] [--multiprocess] [--config=N|all] [--LOG_OUPTUT]"
+        echo "Usage: ./run.sh [--fuzz] [--packet] [--multiprocess] [--config=N|a|all] [--LOG_OUPTUT]"
+        echo "  --config selects one configuration (1-$MAX_CONFIG) or all configurations."
         echo "  --fuzz runs Apache without the embedded fuzzer, matching the 389-ds interface."
         echo "  --multiprocess starts three Apache workers with shared covbridge feedback."
         exit
         ;;
     esac
 done
-case "$CONFIG" in
-a | all | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20) ;;
-*)
-    echo "Config must be 1-20, a, or all." >&2
+if [ "$CONFIG" != a ] && [ "$CONFIG" != all ] &&
+        { [[ ! "$CONFIG" =~ ^[1-9][0-9]*$ ]] ||
+            [ "$CONFIG" -lt 1 ] || [ "$CONFIG" -gt "$MAX_CONFIG" ]; }; then
+    echo "Config must be 1-$MAX_CONFIG, a, or all." >&2
     exit 1
-    ;;
-esac
+fi
 
 mkdir -p \
     "$directory/logs/old/build" \
@@ -189,7 +190,7 @@ if [ "$PACKET_CAPTURE" = 1 ]; then
 fi
 
 if [ "$CONFIG" = a ] || [ "$CONFIG" = all ]; then
-    for BUILD_CONFIG in {1..20}; do
+    for ((BUILD_CONFIG = 1; BUILD_CONFIG <= MAX_CONFIG; BUILD_CONFIG++)); do
         run_fuzzer || _term 1
         sleep 0.1
     done

@@ -84,9 +84,19 @@ The server still dynamically links the system OpenSSL, nghttp2, PCRE2, zlib,
 and Brotli libraries, which do not contain ASan instrumentation. ASan can catch
 an invalid access when instrumented Apache code touches memory associated with
 these libraries, but it cannot check accesses performed entirely inside an
-uninstrumented library. Building these parser-heavy dependencies locally with
-the same Clang sanitizer flags is the largest remaining instrumentation
-expansion.
+uninstrumented library. This does not block the Apache-focused campaign: local
+dependency builds primarily expand the target to bugs inside those projects.
+If that scope is wanted, use a separate static, coverage-instrumented profile
+and start with nghttp2 and zlib. OpenSSL needs a TLS strategy that progresses
+beyond ClientHello parsing to justify its cost; PCRE2 only receives fixed
+patterns here, and this build links the Brotli encoder rather than a request-side
+decoder.
+
+ASan alone is also insufficient for the multiprocess feedback path. A local
+dependency must be built with coverage instrumentation and linked so its guards
+flow through covbridge. The existing one-million-counter bridge is already
+about half occupied by Apache, APR, APR-util, and Expat, so the dependency
+profile must measure guard use before adding a large library such as libcrypto.
 
 The runtime already enables strict string checks, stack-use-after-return, and
 initialization-order checks. Leak detection is disabled for the persistent

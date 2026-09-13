@@ -5,6 +5,7 @@ import gzip
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -35,7 +36,7 @@ class CorpusTests(unittest.TestCase):
         first = GENERATOR.corpus_seeds()
         second = GENERATOR.corpus_seeds()
         self.assertEqual(first, second)
-        self.assertEqual(len(first), 69)
+        self.assertEqual(len(first), 84)
         self.assertTrue({
             "seed-keepalive-wait", "seed-chunk-split", "seed-expect-continue",
             "seed-chunk-offt-max", "seed-chunk-offt-overflow",
@@ -47,6 +48,13 @@ class CorpusTests(unittest.TestCase):
             "seed-deflate-input-stream", "seed-auth-cache-form-session",
             "seed-cache-socache", "seed-h2-control-matrix",
             "seed-proxy-connect-tunnel", "seed-proxy-fcgi",
+            "seed-authz-providers", "seed-buffer-filter-pipeline",
+            "seed-ext-filter-lifecycle", "seed-vhost-userdir",
+            "seed-rewrite-map-matrix", "seed-proxy-express-hosts",
+            "seed-balancer-methods", "seed-balancer-manager",
+            "seed-error-subrequests", "seed-cache-policy-lock",
+            "seed-proxy-response-rewrite", "seed-data-filter-lengths",
+            "seed-imagemap-coordinates", "seed-charset-translate",
         }.issubset(first))
         for data in first.values():
             decoded = REPLAY.parse_fuzzer_input(data)
@@ -108,6 +116,33 @@ class CorpusTests(unittest.TestCase):
             continuation = continuation[9 + frame_length:]
         self.assertEqual(frame_types, [0x04, 0x01, 0x09])
 
+        buffer_seed = REPLAY.parse_fuzzer_input(
+            first["seed-buffer-filter-pipeline"])
+        self.assertEqual([len(packet) for packet in buffer_seed.packets[1:]],
+                         [31, 2, 32])
+        self.assertIn(b"Content-Length: 65\r\n", buffer_seed.packets[0])
+        charset_seed = REPLAY.parse_fuzzer_input(first["seed-charset-translate"])
+        self.assertEqual(charset_seed.flags, 0x07)
+        self.assertIn(b"fuzz\xc2\xa3\xc3\xa9", charset_seed.packets[0])
+        self.assertIn(b"1\r\n\xc2\r\n1\r\n\xa3\r\n", charset_seed.packets[1])
+        self.assertIn(b"1\r\n\xff\r\n", charset_seed.packets[2])
+        data_seed = REPLAY.parse_fuzzer_input(first["seed-data-filter-lengths"])
+        self.assertEqual(len(data_seed.packets), 7)
+        for packet, length in zip(
+                data_seed.packets, (0, 1, 2, 3, 5999, 6000, 6001)):
+            self.assertIn(f"/data/length-{length}.".encode(),
+                          packet)
+        manager_seed = REPLAY.parse_fuzzer_input(first["seed-balancer-manager"])
+        self.assertIn(b"nonce=fuzz", manager_seed.packets[2])
+        self.assertIn(b"w_lf=1.25", manager_seed.packets[2])
+        self.assertIn(b"b_lbm=byrequests", manager_seed.packets[2])
+        error_seed = REPLAY.parse_fuzzer_input(first["seed-error-subrequests"])
+        self.assertIn(b"GET /fallback-zone/subdir HTTP/1.1", error_seed.packets[3])
+        self.assertIn(b"GET /fallback-zone/subdir/ HTTP/1.1", error_seed.packets[4])
+        vhost_seed = REPLAY.parse_fuzzer_input(first["seed-vhost-userdir"])
+        self.assertEqual(vhost_seed.packets[0].count(b"Host:"), 1)
+        self.assertIn(b"Host: blue.vhost.fuzz.test\r\n", vhost_seed.packets[0])
+
     def test_generator_writes_named_seeds(self):
         with tempfile.TemporaryDirectory() as temporary:
             result = subprocess.run(
@@ -137,6 +172,59 @@ class CorpusTests(unittest.TestCase):
             self.assertIn("normalized 0 files; added 0 seed inputs", second.stdout)
             self.assertEqual(snapshot,
                              {path.name: path.read_bytes() for path in corpus.iterdir()})
+
+
+class ConfigMatrixTests(unittest.TestCase):
+    def test_all_config_personalities_are_present_once(self):
+        text = (ROOT / "fuzz-configs.conf.in").read_text()
+        identifiers = [int(value) for value in re.findall(
+            r"^<IfDefine FUZZ_CONFIG_(\d+)>", text, re.MULTILINE)]
+        self.assertEqual(identifiers, list(range(1, 33)))
+
+    def test_expansion_exercises_distinct_module_paths(self):
+        text = (ROOT / "fuzz-configs.conf.in").read_text()
+        blocks = {
+            int(number): body for number, body in re.findall(
+                r"<IfDefine FUZZ_CONFIG_(\d+)>(.*?)</IfDefine>", text, re.DOTALL)
+        }
+        expected = {
+            21: ("AuthBasicProvider anon", "Require group fuzzers"),
+            22: ("SetInputFilter BUFFER", "SetOutputFilter RATE_LIMIT"),
+            23: ("ExtFilterDefine fuzz-in", "Onfail=remove"),
+            24: ("VirtualDocumentRoot", "UserDir"),
+            25: ("dbm=sdbm:", "int:tolower", "int:escape"),
+            26: ("ProxyExpressEnable On", "ProxyExpressDBMType sdbm"),
+            27: ("lbmethod=bytraffic", "lbmethod=bybusyness", "balancer-manager"),
+            28: ("ErrorDocument 404", "FallbackResource", "DirectoryIndexRedirect"),
+            29: ("CacheLock On", "CacheStoreNoStore On", "CacheIgnoreQueryString On"),
+            30: ("ProxyPassReverseCookieDomain", "ProxyErrorOverride On 404 500 503"),
+            31: ("SetOutputFilter DATA", "AddHandler imap-file .map"),
+            32: ("CharsetSourceEnc ISO-8859-1", "CharsetDefault UTF-8"),
+        }
+        for config, directives in expected.items():
+            for directive in directives:
+                self.assertIn(directive, blocks[config],
+                              f"config {config} is missing {directive}")
+
+    def test_proxy_targets_remain_loopback_only(self):
+        text = (ROOT / "fuzz-configs.conf.in").read_text()
+        targets = re.findall(r"(?:https?|ws)://[^/\s\"]+", text)
+        self.assertTrue(targets)
+        self.assertTrue(all(
+            "[::1]" in target or "[[]::1[]]" in target for target in targets),
+            targets)
+
+    def test_build_installs_expansion_modules_maps_and_boundaries(self):
+        text = (ROOT / "build.sh").read_text()
+        for token in (
+                '3 | 19 | 23)', '"--enable-data=static"',
+                '"--enable-imagemap=static"', '"--enable-charset-lite=static"',
+                's#@PORT@#$port#g', 's#@BACKEND2_PORT@#$backend2_port#g',
+                'rewrite-map.dbm', 'express-map.dbm', 'conf/filter.sh',
+                'htdocs/shapes.map', 'length-0.txt', 'length-1.bin',
+                'length-2.txt', 'length-3.bin', 'length-5999.txt',
+                'length-6000.txt', 'length-6001.bin'):
+            self.assertIn(token, text, f"build.sh is missing {token}")
 
 
 class ReplayTests(unittest.TestCase):
