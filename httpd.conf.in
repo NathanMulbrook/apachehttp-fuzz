@@ -1,0 +1,109 @@
+ServerRoot "@RUN_DIR@"
+Listen [::1]:@PORT@
+PidFile "logs/httpd.pid"
+ServerName localhost
+ServerAdmin fuzz@example.invalid
+
+ErrorLog "@ROOT_DIR@/logs/error@CONFIG@"
+LogLevel notice
+LogFormat "%h %l %u %t \"%r\" %>s %b" fuzz_common
+CustomLog "@ROOT_DIR@/logs/access@CONFIG@" fuzz_common
+
+DocumentRoot "@RUN_DIR@/htdocs"
+<Directory />
+    AllowOverride None
+    Require all denied
+</Directory>
+<Directory "@RUN_DIR@/htdocs">
+    Options Indexes FollowSymLinks MultiViews Includes ExecCGI
+    AllowOverride All
+    Require all granted
+</Directory>
+
+DirectoryIndex index.html index.txt
+TypesConfig conf/mime.types
+DefaultType none
+EnableSendfile Off
+EnableMMAP Off
+Timeout 3
+KeepAlive On
+MaxKeepAliveRequests 100
+KeepAliveTimeout 1
+LimitRequestBody 1048576
+LimitRequestFieldSize 16384
+LimitRequestFields 200
+LimitRequestLine 16384
+TraceEnable extended
+FileETag All
+
+<IfModule mpm_event_module>
+    ThreadLimit 32
+    ThreadsPerChild 16
+    MaxConnectionsPerChild 0
+    <IfDefine !FUZZ_MULTIPROCESS>
+        StartServers 1
+        ServerLimit 1
+        MaxRequestWorkers 16
+        MinSpareThreads 1
+        MaxSpareThreads 16
+    </IfDefine>
+    <IfDefine FUZZ_MULTIPROCESS>
+        StartServers 3
+        ServerLimit 3
+        MaxRequestWorkers 48
+        MinSpareThreads 16
+        MaxSpareThreads 48
+    </IfDefine>
+</IfModule>
+<IfModule mpm_worker_module>
+    ThreadLimit 32
+    ThreadsPerChild 16
+    MaxConnectionsPerChild 0
+    <IfDefine !FUZZ_MULTIPROCESS>
+        StartServers 1
+        ServerLimit 1
+        MaxRequestWorkers 16
+        MinSpareThreads 1
+        MaxSpareThreads 16
+    </IfDefine>
+    <IfDefine FUZZ_MULTIPROCESS>
+        StartServers 3
+        ServerLimit 3
+        MaxRequestWorkers 48
+        MinSpareThreads 16
+        MaxSpareThreads 48
+    </IfDefine>
+</IfModule>
+<IfModule mpm_prefork_module>
+    MaxConnectionsPerChild 0
+    <IfDefine !FUZZ_MULTIPROCESS>
+        StartServers 1
+        ServerLimit 1
+        MaxRequestWorkers 1
+        MinSpareServers 1
+        MaxSpareServers 1
+    </IfDefine>
+    <IfDefine FUZZ_MULTIPROCESS>
+        StartServers 3
+        ServerLimit 3
+        MaxRequestWorkers 3
+        MinSpareServers 2
+        MaxSpareServers 3
+    </IfDefine>
+</IfModule>
+
+<IfModule reqtimeout_module>
+    RequestReadTimeout header=3-5,MinRate=1 body=3,MinRate=1
+</IfModule>
+
+<IfModule fuzzer_module>
+    <IfDefine !NO_FUZZ>
+        ApacheFuzzer On
+    </IfDefine>
+    <IfDefine NO_FUZZ>
+        ApacheFuzzer Off
+    </IfDefine>
+</IfModule>
+
+Define FUZZ_CONFIG_@CONFIG@
+Include conf/fuzz-configs.conf

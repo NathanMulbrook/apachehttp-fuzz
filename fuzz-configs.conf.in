@@ -1,0 +1,280 @@
+# The same broad static module build is exercised through twenty runtime
+# personalities. Each installed run_N tree selects exactly one block.
+
+<IfDefine FUZZ_CONFIG_1>
+    HttpProtocolOptions Strict RegisteredMethods Require1.0
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_2>
+    HttpProtocolOptions Strict LenientMethods Require1.0
+    <Location />
+        AllowMethods GET HEAD POST OPTIONS
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_3>
+    HttpProtocolOptions Unsafe LenientMethods Allow0.9
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_4>
+    HttpProtocolOptions Unsafe LenientMethods Require1.0
+    LimitRequestBody 65536
+    LimitRequestFieldSize 8190
+    LimitRequestFields 64
+    LimitRequestLine 8190
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_5>
+    RewriteEngine On
+    RewriteCond %{HTTP_HOST} ^([^.]+)\.fuzz\.test$ [NC]
+    RewriteRule ^/tenant/(.*)$ /rewritten/$1?tenant=%1 [N,E=FUZZ_TENANT:%1]
+    RewriteCond %{QUERY_STRING} (^|&)loop=1(&|$)
+    RewriteRule ^/rewritten/(.*)$ /final/$1 [END]
+    Header always set X-Fuzz-Config "rewrite"
+    Header echo X-Fuzz-Input
+    SetEnvIfExpr "-n req('Forwarded')" FUZZ_FORWARDED=1
+    RemoteIPHeader X-Forwarded-For
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_6>
+    AddOutputFilterByType DEFLATE text/plain text/html application/json
+    AddOutputFilterByType BROTLI_COMPRESS text/plain text/html application/json
+    <Location /inflate>
+        SetHandler reflector
+        SetInputFilter DEFLATE
+        DeflateInflateLimitRequestBody 65536
+    </Location>
+    <Location /sed>
+        SetHandler reflector
+        SetInputFilter Sed
+        SetOutputFilter Sed
+        InputSed "s/fuzz/replaced/g"
+        OutputSed "s/replaced/FUZZED/g"
+    </Location>
+    <Location /substitute>
+        SetOutputFilter SUBSTITUTE
+        Substitute "s/fuzz/replaced/ni"
+    </Location>
+    SetEnvIfNoCase Request_URI "\.(?:txt|html)$" no-gzip=!dont-vary
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_7>
+    AuthnCacheSOCache shmcb:@RUN_DIR@/logs/authn-cache(65536)
+    <Location /auth/basic>
+        AuthType Basic
+        AuthName "fuzz-basic"
+        AuthBasicProvider socache file
+        AuthnCacheProvideFor file
+        AuthUserFile "@RUN_DIR@/conf/users"
+        Require valid-user
+    </Location>
+    <Location /auth/digest>
+        AuthType Digest
+        AuthName "fuzz"
+        AuthDigestProvider file
+        AuthUserFile "@RUN_DIR@/conf/digest-users"
+        Require valid-user
+    </Location>
+    <Location /auth/form>
+        AuthType form
+        AuthName "/auth/form"
+        AuthFormProvider file
+        AuthUserFile "@RUN_DIR@/conf/users"
+        AuthFormLoginRequiredLocation "/login.html"
+        Session On
+        SessionCookieName fuzz-session path=/;httponly
+        Require valid-user
+    </Location>
+    <Location /auth/login>
+        SetHandler form-login-handler
+        AuthType form
+        AuthName "/auth/form"
+        AuthFormProvider file
+        AuthUserFile "@RUN_DIR@/conf/users"
+        AuthFormLoginRequiredLocation "/login.html"
+        AuthFormLoginSuccessLocation "/auth/form"
+        Session On
+        SessionCookieName fuzz-session path=/;httponly
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_8>
+    DavLockDB "@RUN_DIR@/logs/DavLock"
+    Alias /dav "@RUN_DIR@/htdocs/dav"
+    <Directory "@RUN_DIR@/htdocs/dav">
+        Dav On
+        Options Indexes
+        AllowOverride All
+        Require all granted
+    </Directory>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_9>
+    Listen [::1]:@BACKEND_PORT@
+    ProxyRequests Off
+    ProxyPass /proxy/ http://[::1]:@BACKEND_PORT@/backend/
+    ProxyPassReverse /proxy/ http://[::1]:@BACKEND_PORT@/backend/
+    <VirtualHost [::1]:@BACKEND_PORT@>
+        DocumentRoot "@RUN_DIR@/htdocs"
+        SetEnv FUZZ_BACKEND 1
+    </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_10>
+    Listen [::1]:@BACKEND_PORT@
+    ProxyRequests On
+    AllowCONNECT @BACKEND_PORT@
+    <Proxy "*">
+        Require expr "%{THE_REQUEST} =~ m#^(?:CONNECT[[:space:]]+[[]::1[]]:@BACKEND_PORT@[[:space:]]|[^[:space:]]+[[:space:]]+(?:http://[[]::1[]]:@BACKEND_PORT@/|/(?:balancer|socket)/))#"
+    </Proxy>
+    <Proxy "balancer://fuzzcluster">
+        BalancerMember "http://[::1]:@BACKEND_PORT@" route=one
+        ProxySet lbmethod=byrequests
+    </Proxy>
+    ProxyPass /balancer/ balancer://fuzzcluster/
+    ProxyPass /socket/ "ws://[::1]:@BACKEND_PORT@/"
+    <VirtualHost [::1]:@BACKEND_PORT@>
+        DocumentRoot "@RUN_DIR@/htdocs"
+    </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_11>
+    CacheRoot "@RUN_DIR@/logs/cache"
+    CacheEnable disk /
+    CacheSocache shmcb
+    CacheSocacheMaxSize 1048576
+    <Location /socache/>
+        CacheEnable socache
+    </Location>
+    CacheDirLevels 3
+    CacheDirLength 2
+    CacheQuickHandler Off
+    ExpiresActive On
+    ExpiresDefault "access plus 5 seconds"
+    FileETag All
+    CacheFile "@RUN_DIR@/htdocs/index.txt"
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_12>
+    Protocols h2c http/1.1
+    H2Direct On
+    H2MaxSessionStreams 32
+    H2StreamMaxMemSize 65536
+    H2Push On
+    H2PushDiarySize 16
+    H2EarlyHints On
+    H2WebSockets On
+    <Location /h2-push>
+        H2PushResource add /index.txt critical
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_13>
+    SSLEngine On
+    SSLCertificateFile "@RUN_DIR@/conf/server.crt"
+    SSLCertificateKeyFile "@RUN_DIR@/conf/server.key"
+    SSLProtocol all -SSLv3
+    SSLCipherSuite ALL:@SECLEVEL=0
+    Protocols h2 http/1.1
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_14>
+    <Directory "@RUN_DIR@/htdocs">
+        Options +Indexes +MultiViews
+        CheckSpelling On
+    </Directory>
+    AddLanguage en .en
+    AddLanguage fr .fr
+    LanguagePriority en fr
+    ForceLanguagePriority Prefer Fallback
+    IndexOptions FancyIndexing HTMLTable VersionSort
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_15>
+    Header set Accept-Ranges bytes
+    ExpiresActive On
+    ExpiresByType text/plain "access plus 1 minute"
+    SetEnvIf Range .+ has-range
+    SetEnvIf If-Range .+ has-if-range
+    SetEnvIf If-None-Match .+ has-if-none-match
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_16>
+    ScriptAlias /cgi-bin/ "@RUN_DIR@/cgi-bin/"
+    <Directory "@RUN_DIR@/cgi-bin">
+        Options +ExecCGI
+        Require all granted
+    </Directory>
+    AddHandler cgi-script .cgi
+    Action fuzz-handler /cgi-bin/echo.cgi
+    AddHandler fuzz-handler .fuzz
+    AddType text/html .shtml
+    AddOutputFilter INCLUDES .shtml
+    XBitHack Full
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_17>
+    ExtendedStatus On
+    <Location /server-status>
+        SetHandler server-status
+        Require all granted
+    </Location>
+    <Location /server-info>
+        SetHandler server-info
+        Require all granted
+    </Location>
+    <Location /reflect>
+        SetHandler reflector
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_18>
+    Protocols h2c http/1.1
+    H2Direct On
+    H2MaxSessionStreams 100
+    H2WindowSize 65535
+    H2StreamMaxMemSize 262144
+    H2Push On
+    H2PushDiarySize 32
+    H2EarlyHints On
+    H2WebSockets On
+    <Location /h2-push>
+        H2PushResource add /index.txt critical
+    </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_19>
+    HttpProtocolOptions Unsafe LenientMethods Allow0.9
+    RewriteEngine On
+    RewriteRule ^/dav-alias/(.*)$ /dav/$1 [PT]
+    DavLockDB "@RUN_DIR@/logs/DavLock"
+    Alias /dav "@RUN_DIR@/htdocs/dav"
+    <Directory "@RUN_DIR@/htdocs/dav">
+        Dav On
+        Require all granted
+    </Directory>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_20>
+    Listen [::1]:@BACKEND_PORT@
+    HttpProtocolOptions Unsafe LenientMethods Require1.0
+    Protocols h2c http/1.1
+    H2Direct On
+    RewriteEngine On
+    RewriteRule ^/api/(.*)$ /backend/$1 [PT,E=FUZZ_API:1]
+    Header always set X-Fuzz-Config "combined"
+    AddOutputFilterByType DEFLATE text/plain text/html application/json
+    CacheRoot "@RUN_DIR@/logs/cache"
+    CacheEnable disk /
+    CacheQuickHandler Off
+    ProxyRequests Off
+    ProxyTimeout 1
+    ProxyPass /combined-proxy/ http://[::1]:@BACKEND_PORT@/
+    ProxyPass /proxy-ajp/ ajp://[::1]:@BACKEND_PORT@/
+    ProxyPass /proxy-fcgi/ fcgi://[::1]:@BACKEND_PORT@/
+    ProxyPass /proxy-scgi/ scgi://[::1]:@BACKEND_PORT@/
+    ProxyPass /proxy-uwsgi/ uwsgi://[::1]:@BACKEND_PORT@/
+    <VirtualHost [::1]:@BACKEND_PORT@>
+        DocumentRoot "@RUN_DIR@/htdocs"
+    </VirtualHost>
+</IfDefine>
