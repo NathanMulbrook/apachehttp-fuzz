@@ -35,11 +35,15 @@ class CorpusTests(unittest.TestCase):
         first = GENERATOR.corpus_seeds()
         second = GENERATOR.corpus_seeds()
         self.assertEqual(first, second)
-        self.assertEqual(len(first), 61)
+        self.assertEqual(len(first), 69)
         self.assertTrue({
             "seed-keepalive-wait", "seed-chunk-split", "seed-expect-continue",
+            "seed-chunk-offt-max", "seed-chunk-offt-overflow",
+            "seed-chunk-width-rejected", "seed-chunk-extensions-trailers",
+            "seed-trace-max-forwards", "seed-trace-chunked-body",
             "seed-range-conditional", "seed-auth-schemes", "seed-proxy-forms",
             "seed-webdav-stateful", "seed-h2c-upgrade", "seed-tls-clienthello",
+            "seed-tls-alpn-h2-only", "seed-tls-alpn-name-boundary",
             "seed-deflate-input-stream", "seed-auth-cache-form-session",
             "seed-cache-socache", "seed-h2-control-matrix",
             "seed-proxy-connect-tunnel", "seed-proxy-fcgi",
@@ -51,6 +55,43 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(first["seed-h2c-prior-knowledge"][1:25],
                          b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
         self.assertEqual(first["seed-tls-clienthello"][1], 0x16)
+        max_chunk = REPLAY.parse_fuzzer_input(first["seed-chunk-offt-max"])
+        self.assertIn(b"00000000000000007fffffffffffffff;edge=max\r\n",
+                      b"".join(max_chunk.packets))
+        overflow_chunk = REPLAY.parse_fuzzer_input(first["seed-chunk-offt-overflow"])
+        self.assertIn(b"00000000000000008000000000000000;edge=overflow\r\n",
+                      b"".join(overflow_chunk.packets))
+        width_chunk = REPLAY.parse_fuzzer_input(first["seed-chunk-width-rejected"])
+        self.assertIn(b"10000000000000000;edge=width\r\n",
+                      b"".join(width_chunk.packets))
+        trailers = REPLAY.parse_fuzzer_input(first["seed-chunk-extensions-trailers"])
+        trailer_wire = b"".join(trailers.packets)
+        self.assertIn(b'000000000000000a;token=value;quoted="a\\"b"\r\n',
+                      trailer_wire)
+        self.assertTrue(trailer_wire.endswith(
+            b"X-Fuzz-Duplicate: one\r\nX-Fuzz-Duplicate: two\r\n\r\n"))
+        trace = REPLAY.parse_fuzzer_input(first["seed-trace-max-forwards"])
+        self.assertEqual(trace.flags, 0x07)
+        self.assertEqual(len(trace.packets), 3)
+        self.assertTrue(all(packet.startswith(b"TRACE ") for packet in trace.packets))
+        self.assertIn(b"Max-Forwards: 0\r\n", trace.packets[0])
+        self.assertIn(b"TRACE http://[::1]:6810/trace ", trace.packets[1])
+        self.assertIn(b"Max-Forwards: 9223372036854775807\r\n", trace.packets[2])
+        trace_body = REPLAY.parse_fuzzer_input(first["seed-trace-chunked-body"])
+        self.assertEqual(trace_body.flags, 0x02)
+        self.assertIn(b"TRACE /trace/body HTTP/1.1\r\n", trace_body.packets[0])
+        self.assertEqual(b"".join(trace_body.packets[1:]),
+                         b"4;trace=yes\r\nbody\r\n5;part=two\r\nfuzz!\r\n"
+                         b"0\r\nX-Trace-Trailer: complete\r\n\r\n")
+        self.assertEqual(GENERATOR.tls_alpn((b"h2",)), b"\x00\x03\x02h2")
+        longest_alpn = b"fuzz-" + b"a" * 250
+        boundary_alpn = b"\x01\x03\xff" + longest_alpn + b"\x02h2"
+        self.assertIn(GENERATOR.tls_extension(0x0010, boundary_alpn),
+                      first["seed-tls-alpn-name-boundary"])
+        for name in ("seed-tls-alpn-h2-only", "seed-tls-alpn-name-boundary"):
+            record = first[name][1:]
+            self.assertEqual(int.from_bytes(record[3:5], "big"), len(record) - 5)
+            self.assertEqual(int.from_bytes(record[6:9], "big"), len(record) - 9)
         expect = REPLAY.parse_fuzzer_input(first["seed-expect-continue"])
         self.assertEqual(expect.flags, 0x07)
         self.assertEqual(len(expect.packets), 2)

@@ -40,10 +40,14 @@ Byte zero is a flag byte:
 
 With bit 1 clear, bytes 1 onward are sent as one packet. With it set, the rest
 is a sequence of `uint16` big-endian nonzero length followed by that many raw
-bytes. Inputs may contain at most 64 packets. The generated corpus contains 61
+bytes. Inputs may contain at most 64 packets. The generated corpus contains 69
 deterministic seeds for parser boundaries, pipelining, chunked bodies, request
 smuggling boundaries, form auth and sessions, DAV, native proxy protocols,
-filters, caches, CGI/SSI, h2c control frames, WebSockets, and TLS variants.
+filters, caches, CGI/SSI, h2c control frames, WebSockets, and TLS variants. The
+chunked seeds bracket the signed `apr_off_t` limit, cover the separate width
+rejection, and retain valid extension and trailer syntax; focused TRACE and
+ALPN seeds cover chunked TRACE bodies, header enumeration, `Max-Forwards`
+boundaries, and the 255-byte ALPN protocol-name boundary.
 
 Replay a corpus or crash input without starting libFuzzer:
 

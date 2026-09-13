@@ -55,12 +55,23 @@ def tls_extension(number, value):
     return number.to_bytes(2, "big") + len(value).to_bytes(2, "big") + value
 
 
-def tls_client_hello():
+def tls_alpn(protocols):
+    encoded = bytearray()
+    for protocol in protocols:
+        if not 1 <= len(protocol) <= 255:
+            raise ValueError("TLS ALPN protocol names must contain 1 through 255 bytes")
+        encoded.append(len(protocol))
+        encoded.extend(protocol)
+    if not encoded or len(encoded) > 0xFFFF:
+        raise ValueError("TLS ALPN protocol list must contain 1 through 65535 bytes")
+    return len(encoded).to_bytes(2, "big") + encoded
+
+
+def tls_client_hello(protocols=(b"h2", b"http/1.1")):
     name = b"localhost"
     server_name = len(name + b"\0\0\0").to_bytes(2, "big")
     server_name += b"\0" + len(name).to_bytes(2, "big") + name
-    protocols = b"\x02h2\x08http/1.1"
-    alpn = len(protocols).to_bytes(2, "big") + protocols
+    alpn = tls_alpn(protocols)
     groups = b"\x00\x04\x00\x1d\x00\x17"
     signatures = b"\x00\x08\x08\x04\x04\x03\x08\x05\x04\x01"
     key = bytes(range(1, 33))
@@ -143,6 +154,9 @@ def corpus_seeds():
     )
     hello = tls_client_hello()
     hello12 = tls12_client_hello()
+    hello_h2_only = tls_client_hello((b"h2",))
+    longest_alpn_name = b"fuzz-" + b"a" * 250
+    hello_alpn_boundary = tls_client_hello((longest_alpn_name, b"h2"))
     gzip_body = gzip.compress(b"fuzz input filter\n" * 4, mtime=0)
     gzip_bad_crc = gzip_body[:-8] + bytes(byte ^ 0xFF for byte in gzip_body[-8:])
     gzip_members = gzip.compress(b"first fuzz member\n", mtime=0)
@@ -192,6 +206,25 @@ def corpus_seeds():
         "seed-chunk-boundaries": raw(request(
             "POST", "/upload", ("Transfer-Encoding: chunked",),
             b"1;foo=bar\r\na\r\n0000000000000001\r\nb\r\n0\r\n\r\n")),
+        "seed-chunk-offt-max": multipacket(
+            chunk_headers, b"0000000000000000",
+            b"7fffffffffffffff;edge=max\r\n", flags=0x02),
+        "seed-chunk-offt-overflow": multipacket(
+            chunk_headers, b"0000000000000000",
+            b"8000000000000000;edge=overflow\r\n", flags=0x02),
+        "seed-chunk-width-rejected": multipacket(
+            chunk_headers, b"1000000000000000",
+            b"0;edge=width\r\n", flags=0x02),
+        "seed-chunk-extensions-trailers": multipacket(
+            request("POST", "/upload", (
+                "Transfer-Encoding: chunked",
+                "Trailer: X-Fuzz-Checksum, X-Fuzz-Duplicate",
+                "Content-Type: application/octet-stream")),
+            b"000000000000000a;token=value;quoted=\"a\\\"b\"\r\n",
+            b"0123456789\r\n1;flag\r\nZ\r\n",
+            b"000;last=yes\r\nX-Fuzz-Checksum: 0123456789abcdef\r\n"
+            b"X-Fuzz-Duplicate: one\r\nX-Fuzz-Duplicate: two\r\n\r\n",
+            flags=0x02),
         "seed-expect-continue": multipacket(expect_headers, b"hello world", flags=0x07),
         "seed-range-conditional": multipacket(
             request("GET", "/index.html", ("Range: bytes=0-0,-1,2-4,999999-",)),
@@ -282,6 +315,23 @@ def corpus_seeds():
             request("GET", "/server-info?list"),
             request("POST", "/reflect", ("Content-Length: 8", "X-Reflect: yes"), b"reflect!"),
             request("TRACE", "/trace", ("Max-Forwards: 1",)), flags=0x07),
+        "seed-trace-max-forwards": multipacket(
+            request("TRACE", "/trace?headers=1", (
+                "Connection: keep-alive", "Max-Forwards: 0", "X-Trace-Empty:",
+                "X-Trace-Duplicate: one", "X-Trace-Duplicate: two", "TE: trailers")),
+            request("TRACE", "http://[::1]:6810/trace", (
+                "Connection: keep-alive", "Max-Forwards: 0000000000000000000")),
+            request("TRACE", "http://[::1]:6810/trace", (
+                "Connection: close", "Max-Forwards: 9223372036854775807")),
+            flags=0x07),
+        "seed-trace-chunked-body": multipacket(
+            request("TRACE", "/trace/body", (
+                "Connection: close", "Transfer-Encoding: chunked",
+                "Trailer: X-Trace-Trailer", "X-Trace-Body: chunked")),
+            b"4;trace=yes\r\nbody\r\n",
+            b"5;part=two\r\nfuzz!\r\n",
+            b"0\r\nX-Trace-Trailer: complete\r\n\r\n",
+            flags=0x02),
         "seed-request-line-modes": multipacket(
             b"GET /old-style\r\n",
             b"GET\t/tabbed\tHTTP/1.1\nHost: localhost\n\n",
@@ -365,6 +415,8 @@ def corpus_seeds():
                        b"\x02\x07CONNECT\x00\x09:protocol\x09websocket"
                        b"\x86\x04\x08/socket/\x01\x09localhost")),
         "seed-tls-clienthello": raw(hello),
+        "seed-tls-alpn-h2-only": raw(hello_h2_only),
+        "seed-tls-alpn-name-boundary": raw(hello_alpn_boundary),
         "seed-tls-record-split": multipacket(hello[:5], hello[5:41], hello[41:], flags=0x02),
         "seed-tls12-clienthello": raw(hello12),
         "seed-tls-fragmented-handshake": raw(

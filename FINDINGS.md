@@ -19,6 +19,52 @@ AddressSanitizer memory error or LibFuzzer crash artifact during this run. The
 function-type reports also appeared once per relevant Apache child, so the raw
 occurrence count is not a count of separate bugs.
 
+## UBSan impact triage
+
+The chunk-size report is the only finding with plausible protocol impact beyond
+terminating a hardened worker. `apr_off_t` is a signed 64-bit type on this build,
+and a 16-significant-digit chunk size beginning with `8` through `f` shifts into
+its sign bit before Apache tests whether the result is negative. This path is
+unauthenticated and is used for both client request bodies and chunked responses
+received from proxied backends.
+
+An isolated replay of `8000000000000000` on the pinned Clang 23.1.1 `-O0` build
+reported the shift and returned HTTP 413. Focused Clang 23.1.1 and GCC 15.2.1
+`-O2` probes retained the following negative-value check, so no optimized-build
+bypass, memory error, request desynchronization, or worker hang has been
+demonstrated. A compiler is still allowed to exploit the undefined shift; if the
+guard were transformed, the resulting negative remaining length could cause
+empty reads, a worker loop, or bytes being interpreted at the wrong request
+boundary. Those are latent risks rather than observed impact.
+
+Apache's current [`2.4.x` branch](https://github.com/apache/httpd/blob/2.4.x/modules/http/http_filters.c)
+still initializes the chunk bit budget to `sizeof(apr_off_t) * 8`.
+[Trunk](https://github.com/apache/httpd/blob/trunk/modules/http/http_filters.c)
+uses `sizeof(apr_off_t) * 8 - 4` and explicitly says the reduction avoids
+undefined left-shift behavior. Backporting that small change is the direct fix.
+
+The two incorrect-function-type reports have matching pointer representations
+and calling conventions on the tested x86-64 ABI:
+
+- `form_header_field` takes `header_struct *` where APR's callback type takes
+  `void *`; the object passed by TRACE really is a `header_struct`.
+- The stable mod_ssl optional function returns `char *` and takes `char *`, while
+  the core compatibility bridge calls it through a type using `const char *`.
+
+Neither mismatch has a credible direct memory-corruption effect on this ABI, and
+ordinary builds execute the calls as intended. They remain C undefined behavior:
+non-recovering `-fsanitize=function` or LTO `-fsanitize=cfi-icall` builds can
+terminate a request-processing child when a remote TRACE request, deflate lookup,
+or TLS ALPN negotiation reaches the call. The parent can replace a child, but a
+sustained trigger can churn hardened workers. Trunk still has the TRACE callback
+cast; its mod_ssl declaration is now const-correct.
+
+Eight deterministic inputs now target these paths: maximum signed, sign-bit,
+and width-rejected chunk sizes; valid chunk extensions and trailers; TRACE
+header boundaries and a chunked extended-TRACE body; and h2-only plus 255-byte
+ALPN ClientHellos. Isolated replays reproduced all three UBSan sites, produced no
+ASan report, and left both test servers healthy.
+
 The best single configuration, config 20, covered 25.37% of Apache lines,
 16.53% of regions, 38.71% of functions, and 11.21% of branches. Merging all 20
 configurations covered 36.81% of lines, 23.61% of regions, 51.49% of functions,
