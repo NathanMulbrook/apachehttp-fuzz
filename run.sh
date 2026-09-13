@@ -56,7 +56,17 @@ sed "s!tacos!$directory!g" "$directory/logrotate.conf" >"$directory/run/logrotat
 logrotate --force "$directory/run/logrotate.conf" -s "$directory/logs/old/logrotate.status"
 
 fuzzerpids=()
+fuzzerconfigs=()
 selected_configs=()
+active_fuzzers=0
+runtime_failure=0
+
+log_config_error() {
+    local config="$1"
+    shift
+    printf '%s config %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$config" "$*" |
+        tee -a "$directory/logs/error$config" >&2
+}
 
 stop_pid_file() {
     local pid_file="$1"
@@ -90,9 +100,11 @@ _term() {
     local complete=1
     trap - SIGINT SIGTERM
     for fuzzerpid in "${fuzzerpids[@]}"; do
+        [ -n "$fuzzerpid" ] || continue
         kill -TERM "$fuzzerpid" 2>/dev/null || true
     done
     for fuzzerpid in "${fuzzerpids[@]}"; do
+        [ -n "$fuzzerpid" ] || continue
         for attempt in {1..50}; do
             kill -0 "$fuzzerpid" 2>/dev/null || break
             sleep 0.1
@@ -104,6 +116,9 @@ _term() {
             wait "$fuzzerpid" 2>/dev/null || true
         fi
     done
+    if [ "$runtime_failure" = 1 ]; then
+        complete=0
+    fi
     if [ "$result" = 0 ]; then
         for config in "${selected_configs[@]}"; do
             if ! find "$profile_dir/run_$config" -type f -name '*.profraw' \
@@ -134,13 +149,20 @@ run_fuzzer() {
     local pid_file="$run_dir/logs/httpd.pid"
     local profile_file
     local started_pid
+    local startup_status
 
     if [ ! -x "$binary" ] || [ ! -f "$config_file" ]; then
-        echo "Config $BUILD_CONFIG is not built. Run ./build.sh -c=$BUILD_CONFIG -d first." >&2
+        log_config_error "$BUILD_CONFIG" \
+            "is not built. Run ./build.sh -c=$BUILD_CONFIG -d first."
+        runtime_failure=1
         return 1
     fi
 
-    stop_pid_file "$pid_file" "$binary" || return 1
+    if ! stop_pid_file "$pid_file" "$binary"; then
+        log_config_error "$BUILD_CONFIG" "could not stop its previous process; continuing."
+        runtime_failure=1
+        return 1
+    fi
     mkdir -p "$profile_dir/run_$BUILD_CONFIG"
     profile_file="$profile_dir/run_$BUILD_CONFIG/default-%m-%p.profraw"
 
@@ -165,33 +187,41 @@ run_fuzzer() {
     sleep 1
     if ! kill -0 "$started_pid" 2>/dev/null; then
         wait "$started_pid"
-        echo "Config $BUILD_CONFIG exited during startup." >&2
+        startup_status=$?
+        log_config_error "$BUILD_CONFIG" \
+            "process $started_pid exited during startup with status $startup_status."
+        runtime_failure=1
         return 1
     fi
     fuzzerpids+=("$started_pid")
+    fuzzerconfigs+=("$BUILD_CONFIG")
     selected_configs+=("$BUILD_CONFIG")
+    active_fuzzers=$((active_fuzzers + 1))
 }
 
 if [ "$PACKET_CAPTURE" = 1 ]; then
     if ! command -v tcpdump >/dev/null; then
-        echo "tcpdump is required for --packet." >&2
-        exit 1
+        log_config_error Packet "tcpdump is unavailable; continuing without packet capture."
+    else
+        tcpdump -G 43200 -i lo ip6 \
+            -w "$directory/logs/dump-%Y%m%dT%H%M%S-$$.pcap" -z gzip &
+        capture_pid=$!
+        sleep 1
+        if ! kill -0 "$capture_pid" 2>/dev/null; then
+            wait "$capture_pid"
+            capture_status=$?
+            log_config_error Packet \
+                "tcpdump exited during startup with status $capture_status; continuing without packet capture."
+        else
+            fuzzerpids+=("$capture_pid")
+            fuzzerconfigs+=("")
+        fi
     fi
-    tcpdump -G 43200 -i lo ip6 \
-        -w "$directory/logs/dump-%Y%m%dT%H%M%S-$$.pcap" -z gzip &
-    capture_pid=$!
-    sleep 1
-    if ! kill -0 "$capture_pid" 2>/dev/null; then
-        wait "$capture_pid"
-        echo "tcpdump could not start. Give tcpdump scoped capture capabilities or omit --packet; do not run the fuzz stack as root." >&2
-        exit 1
-    fi
-    fuzzerpids+=("$capture_pid")
 fi
 
 if [ "$CONFIG" = a ] || [ "$CONFIG" = all ]; then
     for ((BUILD_CONFIG = 1; BUILD_CONFIG <= MAX_CONFIG; BUILD_CONFIG++)); do
-        run_fuzzer || _term 1
+        run_fuzzer || true
         sleep 0.1
     done
 else
@@ -199,12 +229,30 @@ else
     run_fuzzer || _term 1
 fi
 
+if [ "$active_fuzzers" = 0 ]; then
+    echo "No fuzzing configurations started." >&2
+    _term 1
+fi
+
 while :; do
     sleep 60
-    for fuzzerpid in "${fuzzerpids[@]}"; do
+    for index in "${!fuzzerpids[@]}"; do
+        fuzzerpid="${fuzzerpids[$index]}"
+        [ -n "$fuzzerpid" ] || continue
         if ! kill -0 "$fuzzerpid" 2>/dev/null; then
-            echo "A fuzzing or capture process exited." >&2
-            _term 1
+            wait "$fuzzerpid"
+            process_status=$?
+            config="${fuzzerconfigs[$index]}"
+            if [ -n "$config" ]; then
+                log_config_error "$config" \
+                    "process $fuzzerpid exited with status $process_status; other configurations continue."
+                active_fuzzers=$((active_fuzzers - 1))
+                runtime_failure=1
+            else
+                log_config_error Packet \
+                    "tcpdump process $fuzzerpid exited with status $process_status; fuzzing continues."
+            fi
+            fuzzerpids[$index]=""
         fi
     done
     "$directory/asanProcess.sh"
