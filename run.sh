@@ -3,7 +3,7 @@ set -u
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$directory" || exit 1
-MAX_CONFIG=32
+MAX_CONFIG=34
 FUZZ=""
 CONFIG="all"
 LOG_OUTPUT=1
@@ -170,7 +170,7 @@ run_fuzzer() {
     if [ "$LOG_OUTPUT" = 1 ]; then
         FUZZER_DEBUG=1 \
         LLVM_PROFILE_FILE="$profile_file" \
-        ASAN_OPTIONS="strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:log_path=$directory/logs/asan$BUILD_CONFIG.log:halt_on_error=0" \
+        ASAN_OPTIONS="strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:handle_segv=2:handle_sigbus=2:handle_abort=2:handle_sigill=2:handle_sigfpe=2:log_path=$directory/logs/asan$BUILD_CONFIG.log:halt_on_error=0" \
         UBSAN_OPTIONS="halt_on_error=0:print_stacktrace=1" \
         LSAN_OPTIONS="detect_leaks=0" \
             "$binary" -f "$config_file" -DFOREGROUND $FUZZ $MULTIPROCESS \
@@ -178,7 +178,7 @@ run_fuzzer() {
     else
         FUZZER_DEBUG=1 \
         LLVM_PROFILE_FILE="$profile_file" \
-        ASAN_OPTIONS="strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:log_path=$directory/logs/asan$BUILD_CONFIG.log:halt_on_error=0" \
+        ASAN_OPTIONS="strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:handle_segv=2:handle_sigbus=2:handle_abort=2:handle_sigill=2:handle_sigfpe=2:log_path=$directory/logs/asan$BUILD_CONFIG.log:halt_on_error=0" \
         UBSAN_OPTIONS="halt_on_error=0:print_stacktrace=1" \
         LSAN_OPTIONS="detect_leaks=0" \
             "$binary" -f "$config_file" -DFOREGROUND $FUZZ $MULTIPROCESS &

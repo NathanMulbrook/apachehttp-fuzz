@@ -18,7 +18,7 @@ headers are required.
 ./run.sh -c=1
 ```
 
-`-c=a` or `-c=all` selects all 32 builds. `-r` reinstalls an existing build,
+`-c=a` or `-c=all` selects all 34 builds. `-r` reinstalls an existing build,
 `-p` leaves out the fuzz module, and `-j` uses four build jobs. As in the 389
 interface, `run.sh --fuzz` runs the server without starting libFuzzer.
 Add `--multiprocess` (or `-m`) to start three Apache worker processes. The
@@ -40,7 +40,7 @@ Byte zero is a flag byte:
 
 With bit 1 clear, bytes 1 onward are sent as one packet. With it set, the rest
 is a sequence of `uint16` big-endian nonzero length followed by that many raw
-bytes. Inputs may contain at most 64 packets. The generated corpus contains 84
+bytes. Inputs may contain at most 64 packets. The generated corpus contains 86
 deterministic seeds for parser boundaries, pipelining, chunked bodies, request
 smuggling boundaries, form auth and sessions, DAV, native proxy protocols,
 filters, caches, CGI/SSI, h2c control frames, WebSockets, TLS variants, authz,
@@ -97,6 +97,8 @@ standard raw/framed flag variants. Both corpus tools are idempotent.
 | 30 | reverse-proxy Location, cookie, and error-response rewriting | event |
 | 31 | data output filtering and imagemap coordinate parsing | event |
 | 32 | ISO-8859-1 to UTF-8 reflector input/output conversion | event |
+| 33 | full TLS proxy handshakes, HTTPS backend requests, and DBM TLS sessions | event |
+| 34 | DBM-backed shared response caching and cache-key handling | event |
 
 Each config listens on `[::1]:5800+N`; local proxy backends use
 `[::1]:6800+N`. The forward proxy denies every destination except its matching
@@ -142,9 +144,13 @@ specific HTTP/2 helper activity, is not claimed as precisely attributed
 feedback. Keep the listener dedicated to this local fuzzer; another loopback
 client arriving during an input would join the same measurement.
 
-Sanitizers use recovering mode and write deduplicated logs. A crash in a
-non-controller Apache worker is visible in those logs but is not converted into
-a LibFuzzer crash artifact by the bridge.
+Sanitizers use recovering mode and write deduplicated logs. ASan retains its
+fatal-signal handlers after Apache starts, so a worker crash produces a
+sanitizer report while the other configurations continue. Before sending an
+input, the controller writes its exact binary form to
+`logs/currentInputN-PID`. It removes the file only after coverage is imported;
+a worker crash, coverage timeout, or controller failure therefore leaves the
+input for replay. `status.sh` reports the number of preserved inputs.
 
 The covbridge-derived files retain their MIT terms in `covbridge-LICENSE`. The
 supplied `covbridge-source.zip` was treated as a read-only source artifact.
@@ -179,5 +185,5 @@ run:
 
 The status output shows the Apache parent PID, child count, busiest child CPU,
 latest input age, latest LibFuzzer progress, shared corpus activity, sanitizer
-report count, and crash artifact count. It marks a fuzzing process `STALE` if
-its testcase log has not changed for two minutes.
+report count, crash artifact count, and preserved current-input count. It marks
+a fuzzing process `STALE` if its testcase log has not changed for two minutes.

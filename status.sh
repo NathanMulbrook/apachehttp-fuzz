@@ -2,7 +2,7 @@
 set -u
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-MAX_CONFIG=32
+MAX_CONFIG=34
 CONFIG="all"
 
 for arg in "$@"; do
@@ -136,12 +136,26 @@ done
 
 asan_errors=0
 ubsan_reports=0
+current_inputs=0
 runtime_logs=()
 for config_id in "${config_ids[@]}"; do
     shopt -s nullglob
     sanitizer_logs=("$directory"/logs/asan"$config_id".log.*)
+    current_input_files=("$directory"/logs/currentInput"$config_id"-*)
     shopt -u nullglob
     runtime_logs+=("${sanitizer_logs[@]}")
+    expected_exe="$(realpath -m "$directory/run/run_$config_id/bin/httpd")"
+    for current_input_file in "${current_input_files[@]}"; do
+        current_input_pid="${current_input_file##*-}"
+        case "$current_input_pid" in
+        '' | *[!0-9]*) actual_exe="" ;;
+        *) actual_exe="$(readlink -f "/proc/$current_input_pid/exe" 2>/dev/null || true)" ;;
+        esac
+        actual_exe="${actual_exe% (deleted)}"
+        if [ "$actual_exe" != "$expected_exe" ]; then
+            current_inputs="$((current_inputs + 1))"
+        fi
+    done
     if [ -f "$directory/logs/error$config_id" ]; then
         runtime_logs+=("$directory/logs/error$config_id")
     fi
@@ -158,5 +172,5 @@ crash_artifacts="$(find "$directory" -maxdepth 1 -type f \
 
 echo "Configs: $fuzzing fuzzing, $server_only server-only, $stopped stopped"
 echo "Corpus: $corpus_files files, $corpus_size, newest file ${corpus_age}s ago"
-echo "Findings in selected logs: $asan_errors ASan errors, $ubsan_reports UBSan reports; $crash_artifacts global crash artifacts"
+echo "Findings in selected logs: $asan_errors ASan errors, $ubsan_reports UBSan reports; $crash_artifacts global crash artifacts, $current_inputs preserved current inputs"
 printf '%s\n' "${lines[@]}"

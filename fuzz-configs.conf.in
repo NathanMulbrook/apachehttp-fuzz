@@ -1,4 +1,4 @@
-# The same broad static module build is exercised through thirty-two runtime
+# The same broad static module build is exercised through thirty-four runtime
 # personalities. Each installed run_N tree selects exactly one block.
 
 <IfDefine FUZZ_CONFIG_1>
@@ -495,4 +495,44 @@
         CharsetDefault UTF-8
         CharsetOptions TranslateAllMimeTypes
     </Location>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_33>
+    Listen [::1]:@BACKEND_PORT@
+    SSLSessionCache "dbm:@RUN_DIR@/logs/tls-socache"
+    SSLSessionCacheTimeout 30
+    <VirtualHost [::1]:@PORT@>
+        ServerName tls-proxy.fuzz.test
+        SSLProxyEngine On
+        SSLProxyVerify none
+        SSLProxyCheckPeerName Off
+        SSLProxyCheckPeerExpire Off
+        SSLProxyProtocol all -SSLv3
+        ProxyPass /tls-backend/ https://[::1]:@BACKEND_PORT@/ disablereuse=On connectiontimeout=1 timeout=1
+        ProxyPassReverse /tls-backend/ https://[::1]:@BACKEND_PORT@/
+    </VirtualHost>
+    <VirtualHost [::1]:@BACKEND_PORT@>
+        ServerName tls-backend.fuzz.test
+        DocumentRoot "@RUN_DIR@/htdocs"
+        SSLEngine On
+        SSLCertificateFile "@RUN_DIR@/conf/server.crt"
+        SSLCertificateKeyFile "@RUN_DIR@/conf/server.key"
+        SSLProtocol all -SSLv3
+        SSLCipherSuite ALL:@SECLEVEL=0
+        Protocols h2 http/1.1
+    </VirtualHost>
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_34>
+    CacheSocache "dbm:@RUN_DIR@/logs/cache-socache"
+    CacheSocacheMaxSize 1048576
+    CacheSocacheMaxTime 60
+    CacheSocacheMinTime 1
+    CacheSocacheReadSize 32
+    CacheSocacheReadTime 1
+    CacheEnable socache /socache/
+    CacheQuickHandler Off
+    ExpiresActive On
+    ExpiresDefault "access plus 5 seconds"
+    FileETag All
 </IfDefine>

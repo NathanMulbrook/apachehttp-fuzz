@@ -2,7 +2,7 @@
 set -euo pipefail
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-MAX_CONFIG=32
+MAX_CONFIG=34
 
 help() {
     echo "Usage: ./build.sh [options]"
@@ -364,7 +364,7 @@ EOF
     } >"$run_dir/cgi-bin/echo.cgi"
     chmod 0755 "$run_dir/cgi-bin/echo.cgi"
 
-    if [ "$BUILD_CONFIG" = 13 ]; then
+    if [ "$BUILD_CONFIG" = 13 ] || [ "$BUILD_CONFIG" = 33 ]; then
         openssl req -x509 -newkey rsa:2048 -nodes \
             -keyout "$run_dir/conf/server.key" \
             -out "$run_dir/conf/server.crt" \
@@ -406,6 +406,7 @@ build_software() {
                 -e "s/int port = 5800;/int port = $port;/" \
                 -e "s#/home/admin/software/fuzzing/apachehttp-fuzz#$directory#g" \
                 -e "s/testCases1/testCases$BUILD_CONFIG/g" \
+                -e "s/currentInput1/currentInput$BUILD_CONFIG/g" \
                 -e "s/0x4150465a00000001/0x4150465a000000$(printf '%02x' "$BUILD_CONFIG")/" \
                 modules/fuzzer/fuzzer.c
         fi

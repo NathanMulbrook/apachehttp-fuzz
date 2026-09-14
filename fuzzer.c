@@ -44,13 +44,74 @@
 #ifndef APACHE_FUZZ_NO_APACHE
 static _Atomic int childStopping;
 static _Atomic int exitGuardRegistered;
+static char pathToCurrentInput[] =
+    "/home/admin/software/fuzzing/apachehttp-fuzz/logs/currentInput1";
 extern int __llvm_profile_write_file(void) __attribute__((weak));
 extern void __llvm_profile_set_filename(const char *) __attribute__((weak));
+
+static int currentInputPath(char *path, size_t pathSize) {
+  int length = snprintf(path, pathSize, "%s-%ld", pathToCurrentInput,
+                        (long)getpid());
+
+  if (length < 0 || (size_t)length >= pathSize) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  return 0;
+}
+
+static int writeCurrentInput(const uint8_t *data, size_t size) {
+  char path[sizeof(pathToCurrentInput) + 32];
+  size_t written = 0;
+  int fd;
+
+  if (currentInputPath(path, sizeof(path)) == -1) {
+    return -1;
+  }
+  fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  if (fd == -1) {
+    return -1;
+  }
+  while (written < size) {
+    ssize_t result = write(fd, data + written, size - written);
+    if (result > 0) {
+      written += (size_t)result;
+    } else if (result == -1 && errno == EINTR) {
+      continue;
+    } else {
+      int savedError = result == 0 ? EIO : errno;
+      close(fd);
+      unlink(path);
+      errno = savedError;
+      return -1;
+    }
+  }
+  if (close(fd) == -1) {
+    int savedError = errno;
+    unlink(path);
+    errno = savedError;
+    return -1;
+  }
+  return 0;
+}
+
+static int removeCurrentInput(void) {
+  char path[sizeof(pathToCurrentInput) + 32];
+
+  if (currentInputPath(path, sizeof(path)) == -1) {
+    return -1;
+  }
+  if (unlink(path) == -1 && errno != ENOENT) {
+    return -1;
+  }
+  return 0;
+}
 
 static void fuzzerExitAfterApacheCleanup(void) {
   if (!atomic_load_explicit(&childStopping, memory_order_acquire)) {
     return;
   }
+  (void)removeCurrentInput();
   if (__llvm_profile_write_file != NULL) {
     (void)__llvm_profile_write_file();
   }
@@ -289,6 +350,10 @@ int fuzzServer(const uint8_t *data, size_t size) {
   }
 
 #ifndef APACHE_FUZZ_NO_APACHE
+  if (writeCurrentInput(data, size) == -1) {
+    fprintf(stderr, "could not preserve current input: %s\n", strerror(errno));
+    _exit(2);
+  }
   if (cb_begin(&coverageRun) == -1) {
     fprintf(stderr, "covbridge: could not begin input: %s\n", strerror(errno));
     _exit(2);
@@ -297,7 +362,17 @@ int fuzzServer(const uint8_t *data, size_t size) {
   sockfd = connectTarget();
   if (sockfd == -1) {
 #ifndef APACHE_FUZZ_NO_APACHE
-    (void)cb_cancel(coverageRun);
+    int cancelResult = cb_cancel(coverageRun);
+    int cancelError = errno;
+    int removeResult = removeCurrentInput();
+
+    if (cancelResult == -1 || removeResult == -1) {
+      if (removeResult != -1) {
+        errno = cancelError;
+      }
+      fprintf(stderr, "could not cancel unsent input: %s\n", strerror(errno));
+      _exit(2);
+    }
 #endif
     return -1;
   }
@@ -346,6 +421,10 @@ inputComplete:
   if (cb_libfuzzer_import(&coverageSnapshot, 0) == -1) {
     fprintf(stderr, "covbridge: could not import input %llu: %s\n",
             (unsigned long long)coverageRun, strerror(errno));
+    _exit(2);
+  }
+  if (removeCurrentInput() == -1) {
+    fprintf(stderr, "could not remove completed input: %s\n", strerror(errno));
     _exit(2);
   }
 #endif
@@ -610,6 +689,11 @@ static void fuzzerChildStopping(apr_pool_t *pool, int graceful) {
   (void)pool;
   (void)graceful;
   atomic_store_explicit(&childStopping, 1, memory_order_release);
+  if (removeCurrentInput() == -1) {
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, ap_server_conf,
+                 "ApacheFuzzer could not remove current input: %s",
+                 strerror(errno));
+  }
 }
 
 static const command_rec fuzzerCommands[] = {

@@ -557,6 +557,23 @@ def corpus_seeds():
             request("POST", "/charset", (
                 "Transfer-Encoding: chunked", "Content-Type: text/plain; charset=UTF-8"),
                 b"1\r\n\xff\r\n0\r\n\r\n"), flags=0x07),
+        "seed-tls-backend-proxy": multipacket(
+            request("GET", "/tls-backend/index.txt?tls=one", (
+                "Connection: keep-alive", "X-Forwarded-Proto: fuzz")),
+            request("HEAD", "/tls-backend/index.html", (
+                "Range: bytes=0-7", "If-None-Match: \"tls-fuzz\"")),
+            request("POST", "/tls-backend/index.txt", (
+                "Content-Type: application/octet-stream", "Content-Length: 8"),
+                b"tls-fuzz"), flags=0x07),
+        "seed-cache-socache-dbm": multipacket(
+            request("GET", "/socache/index.txt?key=one", (
+                "Cache-Control: max-age=60",)),
+            request("GET", "/socache/index.txt?key=one", (
+                "Cache-Control: max-age=0", "If-None-Match: \"dbm-fuzz\"")),
+            request("HEAD", "/socache/index.txt?key=two", (
+                "Range: bytes=0-3",)),
+            request("GET", "/socache/index.txt?key=three", (
+                "Cache-Control: no-cache, no-store",)), flags=0x07),
     }
 
 

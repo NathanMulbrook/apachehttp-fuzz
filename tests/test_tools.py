@@ -36,7 +36,7 @@ class CorpusTests(unittest.TestCase):
         first = GENERATOR.corpus_seeds()
         second = GENERATOR.corpus_seeds()
         self.assertEqual(first, second)
-        self.assertEqual(len(first), 84)
+        self.assertEqual(len(first), 86)
         self.assertTrue({
             "seed-keepalive-wait", "seed-chunk-split", "seed-expect-continue",
             "seed-chunk-offt-max", "seed-chunk-offt-overflow",
@@ -55,6 +55,7 @@ class CorpusTests(unittest.TestCase):
             "seed-error-subrequests", "seed-cache-policy-lock",
             "seed-proxy-response-rewrite", "seed-data-filter-lengths",
             "seed-imagemap-coordinates", "seed-charset-translate",
+            "seed-tls-backend-proxy", "seed-cache-socache-dbm",
         }.issubset(first))
         for data in first.values():
             decoded = REPLAY.parse_fuzzer_input(data)
@@ -179,7 +180,7 @@ class ConfigMatrixTests(unittest.TestCase):
         text = (ROOT / "fuzz-configs.conf.in").read_text()
         identifiers = [int(value) for value in re.findall(
             r"^<IfDefine FUZZ_CONFIG_(\d+)>", text, re.MULTILINE)]
-        self.assertEqual(identifiers, list(range(1, 33)))
+        self.assertEqual(identifiers, list(range(1, 35)))
 
     def test_expansion_exercises_distinct_module_paths(self):
         text = (ROOT / "fuzz-configs.conf.in").read_text()
@@ -200,6 +201,9 @@ class ConfigMatrixTests(unittest.TestCase):
             30: ("ProxyPassReverseCookieDomain", "ProxyErrorOverride On 404 500 503"),
             31: ("SetOutputFilter DATA", "AddHandler imap-file .map"),
             32: ("CharsetSourceEnc ISO-8859-1", "CharsetDefault UTF-8"),
+            33: ("SSLProxyEngine On", "https://[::1]:@BACKEND_PORT@/",
+                 "SSLSessionCache \"dbm:"),
+            34: ("CacheSocache \"dbm:", "CacheEnable socache /socache/"),
         }
         for config, directives in expected.items():
             for directive in directives:
@@ -225,6 +229,18 @@ class ConfigMatrixTests(unittest.TestCase):
                 'length-2.txt', 'length-3.bin', 'length-5999.txt',
                 'length-6000.txt', 'length-6001.bin'):
             self.assertIn(token, text, f"build.sh is missing {token}")
+        self.assertIn('[ "$BUILD_CONFIG" = 13 ] || [ "$BUILD_CONFIG" = 33 ]',
+                      text)
+
+    def test_command_scripts_accept_the_complete_matrix(self):
+        for name in ("build.sh", "run.sh", "status.sh", "genreport.sh"):
+            text = (ROOT / name).read_text()
+            self.assertRegex(text, r"(?m)^MAX_CONFIG=34$")
+
+        run_source = (ROOT / "run.sh").read_text()
+        self.assertIn("handle_segv=2", run_source)
+        self.assertIn("handle_sigbus=2", run_source)
+        self.assertIn("halt_on_error=0", run_source)
 
 
 class ReplayTests(unittest.TestCase):
@@ -360,6 +376,9 @@ class HarnessTests(unittest.TestCase):
         self.assertIn("ap_hook_child_stopping(fuzzerChildStopping", source)
         self.assertIn("atexit(fuzzerExitAfterApacheCleanup)", source)
         self.assertIn("launchedProcess == process", source)
+        self.assertIn("writeCurrentInput(data, size)", source)
+        self.assertIn("O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC", source)
+        self.assertIn("removeCurrentInput()", source)
         self.assertIn("AP_DECLARE_MODULE(fuzzer)", source)
 
 

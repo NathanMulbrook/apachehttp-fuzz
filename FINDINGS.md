@@ -1,5 +1,57 @@
 # Fuzzing findings
 
+## September 13-14 coverage follow-up
+
+The exact-provenance multiprocess session
+`logs/profiles/20260913T213249Z-3084251` ran for 10h45m and produced 126
+nonempty, mergeable profiles. The first 20 configurations reached 27.91% of
+regions, 57.59% of functions, 42.70% of lines, and 20.18% of branches when
+reported against the config 20 event-MPM binary. Merging all 32 profiles in
+that same common/event view reached 29.86% of regions, 60.43% of functions,
+45.71% of lines, and 21.69% of branches. Configurations 21-32 therefore added
+5,123 covered regions, 163 functions, 4,385 lines, and 2,076 branches beyond
+the first 20 in that view. The separate all-profile worker and prefork views
+reached 45.50% and 45.36% of lines respectively; no single binary contains all
+three MPM implementations.
+
+Compared with the preceding 7h27m union, the longer exact session added roughly
+995 regions, 7 functions, 640 lines, and 548 branches. That earlier session
+crossed a binary rebuild and emitted three profile-mismatch warnings, so this
+is a useful saturation trend rather than an exact provenance-matched delta. The
+campaign is still progressing, but slowly enough that targeted runtime states
+are more useful than more time on the same matrix. Strong core paths included
+`server/protocol.c` at 81.19% line coverage and
+`modules/http/http_filters.c` at 79.45%. Meaningful under-covered paths included
+`modules/ssl/ssl_engine_kernel.c` at 17.99%,
+`modules/ssl/ssl_engine_io.c` at 30.94%, `modules/mappers/mod_rewrite.c` at
+35.11%, `modules/dav/main/mod_dav.c` at 36.25%, and
+`modules/proxy/mod_proxy.c` at 40.51%.
+
+Two focused, self-contained personalities now address those gaps. Config 33
+proxies fuzz requests through a full TLS handshake to a local HTTPS virtual
+host and uses a DBM TLS session cache. Config 34 uses DBM-backed response
+caching with validators, ranges, and cache-control transitions. Two matching
+multipacket seeds exercise repeated and stateful requests. Post-rebuild smoke
+profiles confirmed the intended gain: config 33's TLS proxy seed reached 38.98%
+of `ssl_engine_io.c` lines, versus 30.94% in the long aggregate, and config 34's
+cache seed reached 37.43% of `mod_socache_dbm.c`, versus 1.40%. These narrow
+single-seed profiles validate the paths but are not new whole-campaign totals.
+
+The completed session also contained three genuine Apache child SIGSEGVs:
+config 12 at 22:33:39 and 00:36:56 local time, and config 20 at 23:24:00.
+Apache logged `exit signal Segmentation fault (11)`, but ASan did not emit a
+fatal report and no core was retained. Apache had replaced ASan's default
+fatal-signal handler, while ASan had limited core dumps. The exact inputs had
+already rotated out of the ten retained testcase logs, so the crashes are
+confirmed findings without an attributable reproducer or demonstrated impact.
+
+The runtime now sets ASan's fatal-signal options to mode 2, which prevents
+Apache from replacing those handlers, while keeping sanitizer recovery enabled
+for nonfatal findings. The fuzzer also preserves each exact binary input before
+starting its coverage run and removes it only after successful coverage import.
+A worker death causes the controller to time out and exit, leaving the input as
+`logs/currentInputN-PID` for replay; `status.sh` counts these artifacts.
+
 This snapshot covers the completed 20-configuration multiprocess run started
 at `20260912T225603Z`. It ran for 10h28m and completed at least 17,196,297
 inputs. The raw sanitizer logs contain 123 recovering UBSan reports at three
