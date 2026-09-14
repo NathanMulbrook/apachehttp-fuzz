@@ -7,11 +7,13 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 
@@ -241,6 +243,137 @@ class ConfigMatrixTests(unittest.TestCase):
         self.assertIn("handle_segv=2", run_source)
         self.assertIn("handle_sigbus=2", run_source)
         self.assertIn("halt_on_error=0", run_source)
+
+    def test_duplicate_run_stops_before_rotating_active_logs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            script = temporary / "run.sh"
+            shutil.copy2(ROOT / "run.sh", script)
+            script.chmod(0o755)
+            run_dir = temporary / "run" / "run_1"
+            (run_dir / "bin").mkdir(parents=True)
+            (run_dir / "logs").mkdir()
+            (run_dir / "bin" / "httpd").symlink_to(Path(sys.executable).resolve())
+            (run_dir / "logs" / "httpd.pid").write_text(f"{os.getpid()}\n")
+            logs = temporary / "logs"
+            logs.mkdir()
+            marker = logs / "error1"
+            marker.write_text("active log\n")
+
+            result = subprocess.run(
+                [str(script), "--config=1"], text=True, capture_output=True)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("already running", result.stderr)
+            self.assertEqual(marker.read_text(), "active log\n")
+            self.assertFalse((logs / "old").exists())
+
+    def test_campaign_lock_rejects_concurrent_launcher(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            script = temporary / "run.sh"
+            shutil.copy2(ROOT / "run.sh", script)
+            shutil.copy2(ROOT / "logrotate.conf", temporary / "logrotate.conf")
+            script.chmod(0o755)
+
+            fake_bin = temporary / "fake-bin"
+            fake_bin.mkdir()
+            marker = temporary / "rotations"
+            logrotate = fake_bin / "logrotate"
+            logrotate.write_text(
+                "#!/bin/sh\nprintf x >>\"$ROTATION_MARKER\"\n")
+            logrotate.chmod(0o755)
+
+            run_dir = temporary / "run" / "run_1"
+            (run_dir / "bin").mkdir(parents=True)
+            (run_dir / "conf").mkdir()
+            (run_dir / "conf" / "httpd.conf").write_text("test\n")
+            httpd = run_dir / "bin" / "httpd"
+            httpd.write_text(
+                "#!/bin/sh\ntrap 'exit 0' TERM INT\n"
+                "while :; do sleep 1; done\n")
+            httpd.chmod(0o755)
+
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+            environment["ROTATION_MARKER"] = str(marker)
+            first = subprocess.Popen(
+                [str(script), "--config=1"], env=environment,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                start_new_session=True)
+            try:
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(marker.exists())
+                self.assertIsNone(first.poll())
+
+                second = subprocess.run(
+                    [str(script), "--config=1"], env=environment,
+                    text=True, capture_output=True, timeout=5)
+                self.assertEqual(second.returncode, 75)
+                self.assertIn("already running", second.stderr)
+                self.assertEqual(marker.read_text(), "x")
+                self.assertIsNone(first.poll())
+
+                help_result = subprocess.run(
+                    [str(script), "--help"], env=environment,
+                    text=True, capture_output=True, timeout=5)
+                self.assertEqual(help_result.returncode, 0)
+                self.assertIn("Usage:", help_result.stdout)
+                self.assertEqual(marker.read_text(), "x")
+            finally:
+                if first.poll() is None:
+                    os.killpg(first.pid, signal.SIGTERM)
+                first.communicate(timeout=10)
+
+            released = subprocess.run(
+                [str(script), "--config=2"], env=environment,
+                text=True, capture_output=True, timeout=5)
+            self.assertEqual(released.returncode, 1)
+            self.assertEqual(marker.read_text(), "xx")
+
+    def test_status_uses_latest_progress_across_log_rotation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            script = temporary / "status.sh"
+            shutil.copy2(ROOT / "status.sh", script)
+            script.chmod(0o755)
+            run_dir = temporary / "run" / "run_1"
+            (run_dir / "bin").mkdir(parents=True)
+            (run_dir / "logs").mkdir()
+            (run_dir / "bin" / "httpd").symlink_to(Path(sys.executable).resolve())
+            (run_dir / "logs" / "httpd.pid").write_text(f"{os.getpid()}\n")
+            logs = temporary / "logs"
+            (logs / "old" / "error").mkdir(parents=True)
+            (logs / "testCases1").write_text("input\n")
+            (logs / "error1").write_text("continued Apache output\n")
+            rotated = logs / "old" / "error" / "error1.1"
+            rotated.write_text(
+                "#4096\tpulse  ft: 123 corp: 7/70b exec/s: 19 rss: 20Mb\n")
+            future = time.time() + 2
+            os.utime(rotated, (future, future))
+
+            result = subprocess.run(
+                [str(script), "--config=1"], check=True, text=True,
+                capture_output=True)
+
+            self.assertIn("Configs: 1 fuzzing", result.stdout)
+            self.assertIn("#4096", result.stdout)
+            self.assertNotIn("starting", result.stdout)
+
+            os.utime(rotated, (1, 1))
+            stale = subprocess.run(
+                [str(script), "--config=1"], check=True, text=True,
+                capture_output=True)
+            self.assertNotIn("#4096", stale.stdout)
+            self.assertIn("starting", stale.stdout)
+
+    def test_slow_unit_copies_do_not_dirty_git_status(self):
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index",
+             "slow-unit-0123456789abcdef"], cwd=ROOT)
+        self.assertEqual(result.returncode, 0)
 
 
 class ReplayTests(unittest.TestCase):

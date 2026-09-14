@@ -55,6 +55,8 @@ else
     corpus_size=0
 fi
 now="$(date +%s)"
+boot_time="$(awk '$1 == "btime" { print $2; exit }' /proc/stat 2>/dev/null || true)"
+clock_ticks="$(getconf CLK_TCK 2>/dev/null || true)"
 if [ "$corpus_latest" -gt 0 ]; then
     corpus_age="$((now - corpus_latest))"
     if [ "$corpus_age" -lt 0 ]; then
@@ -74,6 +76,7 @@ for config_id in "${config_ids[@]}"; do
     pid_file="$run_dir/logs/httpd.pid"
     state="stopped"
     detail=""
+    process_start=0
 
     if [ -f "$pid_file" ]; then
         read -r pid < "$pid_file"
@@ -85,6 +88,12 @@ for config_id in "${config_ids[@]}"; do
             actual_exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
             actual_exe="${actual_exe% (deleted)}"
             if [ "$actual_exe" = "$expected_exe" ]; then
+                start_ticks="$(awk '{ print $22 }' "/proc/$pid/stat" 2>/dev/null || true)"
+                if [[ "$boot_time" =~ ^[0-9]+$ ]] &&
+                        [[ "$clock_ticks" =~ ^[1-9][0-9]*$ ]] &&
+                        [[ "$start_ticks" =~ ^[0-9]+$ ]]; then
+                    process_start="$((boot_time + start_ticks / clock_ticks))"
+                fi
                 if tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fqx -- '-DNO_FUZZ'; then
                     state="server-only"
                     server_only="$((server_only + 1))"
@@ -121,8 +130,18 @@ for config_id in "${config_ids[@]}"; do
         fi
 
         error_log="$directory/logs/error$config_id"
-        if [ -f "$error_log" ]; then
-            progress="$(tail -n 20000 "$error_log" |
+        rotated_error_log="$directory/logs/old/error/error$config_id.1"
+        if [ -f "$rotated_error_log" ]; then
+            rotated_mtime="$(stat -c %Y "$rotated_error_log")"
+            if [ "$process_start" -eq 0 ] || [ "$rotated_mtime" -le "$process_start" ]; then
+                rotated_error_log=""
+            fi
+        fi
+        if [ -f "$error_log" ] || [ -f "$rotated_error_log" ]; then
+            progress="$({
+                [ ! -f "$rotated_error_log" ] || tail -n 20000 "$rotated_error_log"
+                [ ! -f "$error_log" ] || tail -n 20000 "$error_log"
+            } |
                 grep -aE '^#[0-9]+.*(pulse|INITED|NEW|REDUCE)' | tail -n 1 || true)"
             if [ -n "$progress" ]; then
                 detail+=" ${progress:0:180}"

@@ -43,6 +43,37 @@ if [ "$CONFIG" != a ] && [ "$CONFIG" != all ] &&
     exit 1
 fi
 
+mkdir -p "$directory/run"
+if [ "${APACHEHTTP_FUZZ_RUN_LOCKED:-0}" != 1 ]; then
+    APACHEHTTP_FUZZ_RUN_LOCKED=1 flock -n -o -E 75 \
+        "$directory/run/run.lock" "$directory/run.sh" "$@"
+    lock_status=$?
+    if [ "$lock_status" -eq 75 ]; then
+        echo "Another fuzzing campaign is starting or already running." >&2
+    fi
+    exit "$lock_status"
+fi
+
+mkdir -p "$directory/logs"
+running_configs=()
+for ((config_id = 1; config_id <= MAX_CONFIG; config_id++)); do
+    pid_file="$directory/run/run_$config_id/logs/httpd.pid"
+    [ -f "$pid_file" ] || continue
+    read -r running_pid <"$pid_file" || continue
+    case "$running_pid" in
+    *[!0-9]* | "") continue ;;
+    esac
+    running_exe="$(readlink -f "/proc/$running_pid/exe" 2>/dev/null || true)"
+    expected_exe="$(realpath -m "$directory/run/run_$config_id/bin/httpd")"
+    if [ "${running_exe% (deleted)}" = "$expected_exe" ]; then
+        running_configs+=("$config_id")
+    fi
+done
+if [ "${#running_configs[@]}" -gt 0 ]; then
+    echo "A fuzzing campaign is already running (configs: ${running_configs[*]})." >&2
+    exit 1
+fi
+
 mkdir -p \
     "$directory/logs/old/build" \
     "$directory/logs/old/error" \
