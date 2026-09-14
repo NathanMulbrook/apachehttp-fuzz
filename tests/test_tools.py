@@ -29,7 +29,6 @@ def load_script(name, filename):
 
 
 GENERATOR = load_script("apache_corpus_generator", "generate-interesting-corpus.py")
-NORMALIZER = load_script("apache_corpus_normalizer", "normalize-corpus-flags.py")
 REPLAY = load_script("apache_replay", "send-test-case.py")
 
 
@@ -155,27 +154,6 @@ class CorpusTests(unittest.TestCase):
             self.assertEqual(
                 (Path(temporary) / "seed-tls-clienthello").read_bytes(),
                 GENERATOR.corpus_seeds()["seed-tls-clienthello"])
-
-    def test_normalizer_is_idempotent_and_adds_flag_variants(self):
-        framed = NORMALIZER.multipacket_seed(0xFE)
-        self.assertEqual(NORMALIZER.normalize(framed)[0], 0x06)
-        self.assertEqual(NORMALIZER.normalize(b"\x02\x00"), b"\x00\x00")
-
-        with tempfile.TemporaryDirectory() as temporary:
-            corpus = Path(temporary)
-            (corpus / "legacy").write_bytes(b"\xffGET / HTTP/1.0\r\n\r\n")
-            first = subprocess.run(
-                [sys.executable, str(ROOT / "normalize-corpus-flags.py"), temporary],
-                check=True, text=True, capture_output=True)
-            snapshot = {path.name: path.read_bytes() for path in corpus.iterdir()}
-            second = subprocess.run(
-                [sys.executable, str(ROOT / "normalize-corpus-flags.py"), temporary],
-                check=True, text=True, capture_output=True)
-            self.assertIn("added 6 seed inputs", first.stdout)
-            self.assertIn("normalized 0 files; added 0 seed inputs", second.stdout)
-            self.assertEqual(snapshot,
-                             {path.name: path.read_bytes() for path in corpus.iterdir()})
-
 
 class ConfigMatrixTests(unittest.TestCase):
     def test_all_config_personalities_are_present_once(self):
@@ -389,7 +367,7 @@ class ReplayTests(unittest.TestCase):
     def test_dry_run_selects_framed_packet_and_raw_mode(self):
         with tempfile.TemporaryDirectory() as temporary:
             framed = Path(temporary) / "framed"
-            framed.write_bytes(NORMALIZER.multipacket_seed(0x06))
+            framed.write_bytes(GENERATOR.corpus_seeds()["seed-keepalive-wait"])
             result = subprocess.run(
                 [sys.executable, str(ROOT / "send-test-case.py"), str(framed),
                  "--packet", "2", "--dry-run"], check=True, text=True,

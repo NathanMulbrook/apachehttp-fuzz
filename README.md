@@ -58,9 +58,6 @@ Replay a corpus or crash input without starting libFuzzer:
 ./send-test-case.py corpus/seed-chunk-split --packet 2 --port 5801
 ```
 
-`normalize-corpus-flags.py corpus` converts older flag bytes and adds the
-standard raw/framed flag variants. Both corpus tools are idempotent.
-
 ## Configurations
 
 | N | Main coverage target | MPM |
