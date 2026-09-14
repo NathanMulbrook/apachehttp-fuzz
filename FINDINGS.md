@@ -1,5 +1,53 @@
 # Fuzzing findings
 
+## September 14 sanitizer follow-up
+
+The expanded logs contain 201 recovering UBSan diagnostics, but still only
+three semantic source sites: 98 signed chunk-size shifts at
+`modules/http/http_filters.c:270`, 98 TRACE callback type mismatches at
+`srclib/apr/tables/apr_tables.c:990`, and five mod_ssl optional-function type
+mismatches at `server/ssl.c:192`. A few newer logs symbolize the last two
+callbacks as `ap_get_client_block` or `ssl_var_register`. Those names came from
+symbolizing still-running processes after their on-disk binaries had been
+rebuilt; the source locations, call stacks, and previously verified callback
+implementations show that they are not new UBSan sites. The impact assessment
+below remains unchanged: the chunk shift is real protocol-reachable undefined
+behavior, while the two function-type mismatches are ABI-benign on tested
+x86-64 builds but are expected to terminate non-recovering UBSan or
+CFI-hardened children. CFI was not tested.
+
+The campaign also found a separate, higher-interest ASan issue in mod_http2.
+A reduced 8,001-byte HTTP/2 connection payload causes an invalid indirect call
+after a malformed HEADERS block closes its stream. `read_and_feed()` uses
+`session->bbtmp` for socket input; the reentrant `ev_stream_closed()` callback
+uses and cleans the same brigade for its output EOS bucket. When parsing returns,
+`c1_in_feed_brigade()` deletes a stale APR bucket and calls a non-executable
+destroy pointer. Thirty-one saved config 12/event and config 18/worker reports
+have the same wild-jump shape, including the deliberately repeated reduction
+runs.
+
+The reduced trigger reproduced three times in an unmodified Apache 2.4.68
+source build without the fuzzer module. A single-process replay exited 134
+after ASan reported the SEGV; multiprocess replays killed and replaced workers.
+Trace logging captured the input brigade, invalid header, `CLOSED` transition,
+and `adding h2_eos to c1 out` immediately before the stale destroy. Inputs no
+larger than 8,000 bytes did not reproduce. A valid 8,080-byte HTTP/2 POST/DATA
+control returned normal responses four times without a sanitizer report and is
+now retained as `seed-h2-large-data`; the crashing input is intentionally not
+placed in the shared corpus. The full reproducer and evidence are recorded in
+the private finding repository.
+
+The exact long-run coverage report also identified mod_remoteip's PROXY parser
+as a clean gap: config 35 now enables `RemoteIPProxyProtocol On`, and eight
+deterministic inputs cover PROXY v1 TCP4, TCP6, UNKNOWN, a split detection
+boundary, and PROXY v2 TCP4, TCP6, LOCAL, and oversize-length handling. This
+adds a distinct connection-level parser without duplicating existing HTTP
+personalities. An isolated replay of those eight seeds at the standard notice
+log level covered 41.85% of
+`mod_remoteip.c` lines, compared with 14.95% in the prior exact long-run
+aggregate. The smoke run is a focused path check rather than a new
+whole-campaign total.
+
 ## September 13-14 coverage follow-up
 
 The exact-provenance multiprocess session

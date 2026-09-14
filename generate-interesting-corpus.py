@@ -147,6 +147,16 @@ def corpus_seeds():
     h2_headers = h2_request_headers(1)
     h2_ping = h2_frame(0x06, 0x00, 0, b"fuzzhttp")
     h2_preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+    h2_post_path = b"/upload"
+    h2_post_block = (
+        b"\x83\x86\x04" + bytes([len(h2_post_path)]) + h2_post_path
+        + b"\x01\x09localhost"
+    )
+    h2_large_post = (
+        h2_preface + h2_settings
+        + h2_frame(0x01, 0x04, 1, h2_post_block)
+        + h2_frame(0x00, 0x01, 1, b"A" * 8001)
+    )
     h2_upgrade = request(
         "GET", "/h2c",
         ("Connection: Upgrade, HTTP2-Settings", "Upgrade: h2c",
@@ -176,6 +186,23 @@ def corpus_seeds():
         b"&w_status_D=0&b_lbm=byrequests&b_tmo=1&b_max=2&b_sforce=0"
         b"&b_ss=FUZZROUTE&xml=1"
     )
+    proxy_v2_signature = b"\r\n\r\n\0\r\nQUIT\n"
+    proxy_v1_tcp4 = b"PROXY TCP4 192.0.2.1 198.51.100.2 12345 5835\r\n"
+    proxy_v1_tcp6 = b"PROXY TCP6 2001:db8::1 2001:db8::2 443 5835\r\n"
+    proxy_v1_unknown = b"PROXY UNKNOWN fuzz\r\n"
+    proxy_v2_tcp4 = (
+        proxy_v2_signature + b"\x21\x11\x00\x0c"
+        + b"\xc0\x00\x02\x01\xc6\x33\x64\x02"
+        + b"\x30\x39\x16\xcb"
+    )
+    proxy_v2_tcp6 = (
+        proxy_v2_signature + b"\x21\x21\x00\x24"
+        + bytes.fromhex("20010db8000000000000000000000001")
+        + bytes.fromhex("20010db8000000000000000000000002")
+        + b"\x01\xbb\x16\xcb"
+    )
+    proxy_v2_local = proxy_v2_signature + b"\x20\x00\x00\x00"
+    proxy_v2_oversize = proxy_v2_signature + b"\x21\x11\x00\xd9"
 
     return {
         "seed-get-index": raw(get),
@@ -420,6 +447,7 @@ def corpus_seeds():
             + h2_frame(0x01, 0x05, 1,
                        b"\x02\x07CONNECT\x00\x09:protocol\x09websocket"
                        b"\x86\x04\x08/socket/\x01\x09localhost")),
+        "seed-h2-large-data": raw(h2_large_post),
         "seed-tls-clienthello": raw(hello),
         "seed-tls-alpn-h2-only": raw(hello_h2_only),
         "seed-tls-alpn-name-boundary": raw(hello_alpn_boundary),
@@ -574,6 +602,25 @@ def corpus_seeds():
                 "Range: bytes=0-3",)),
             request("GET", "/socache/index.txt?key=three", (
                 "Cache-Control: no-cache, no-store",)), flags=0x07),
+        "seed-proxy-protocol-v1-tcp4": raw(
+            proxy_v1_tcp4 + request("GET", "/index.txt")),
+        "seed-proxy-protocol-v1-tcp6": raw(
+            proxy_v1_tcp6 + request("GET", "/index.txt")),
+        "seed-proxy-protocol-v1-unknown": multipacket(
+            proxy_v1_unknown[:15], proxy_v1_unknown[15:],
+            request("GET", "/index.txt"), flags=0x02),
+        "seed-proxy-protocol-v1-split": multipacket(
+            proxy_v1_tcp4[:15], proxy_v1_tcp4[15:],
+            request("GET", "/index.txt"), flags=0x02),
+        "seed-proxy-protocol-v2-tcp4": raw(
+            proxy_v2_tcp4 + request("GET", "/index.txt")),
+        "seed-proxy-protocol-v2-tcp6-split": multipacket(
+            proxy_v2_tcp6[:15], proxy_v2_tcp6[15:16],
+            proxy_v2_tcp6[16:], request("GET", "/index.txt"), flags=0x02),
+        "seed-proxy-protocol-v2-local": raw(
+            proxy_v2_local + request("GET", "/index.txt")),
+        "seed-proxy-protocol-v2-oversize": raw(
+            proxy_v2_oversize + request("GET", "/index.txt")),
     }
 
 

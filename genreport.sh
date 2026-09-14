@@ -2,7 +2,7 @@
 set -euo pipefail
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-MAX_CONFIG=34
+MAX_CONFIG=35
 source "$directory/toolchain/use-llvm.sh"
 
 usage() {

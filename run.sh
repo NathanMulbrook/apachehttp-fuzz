@@ -3,7 +3,7 @@ set -u
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$directory" || exit 1
-MAX_CONFIG=34
+MAX_CONFIG=35
 FUZZ=""
 CONFIG="all"
 LOG_OUTPUT=1

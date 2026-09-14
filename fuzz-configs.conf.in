@@ -1,4 +1,4 @@
-# The same broad static module build is exercised through thirty-four runtime
+# The same broad static module build is exercised through thirty-five runtime
 # personalities. Each installed run_N tree selects exactly one block.
 
 <IfDefine FUZZ_CONFIG_1>
@@ -535,4 +535,8 @@
     ExpiresActive On
     ExpiresDefault "access plus 5 seconds"
     FileETag All
+</IfDefine>
+
+<IfDefine FUZZ_CONFIG_35>
+    RemoteIPProxyProtocol On
 </IfDefine>

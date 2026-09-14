@@ -37,7 +37,7 @@ class CorpusTests(unittest.TestCase):
         first = GENERATOR.corpus_seeds()
         second = GENERATOR.corpus_seeds()
         self.assertEqual(first, second)
-        self.assertEqual(len(first), 86)
+        self.assertEqual(len(first), 95)
         self.assertTrue({
             "seed-keepalive-wait", "seed-chunk-split", "seed-expect-continue",
             "seed-chunk-offt-max", "seed-chunk-offt-overflow",
@@ -57,6 +57,11 @@ class CorpusTests(unittest.TestCase):
             "seed-proxy-response-rewrite", "seed-data-filter-lengths",
             "seed-imagemap-coordinates", "seed-charset-translate",
             "seed-tls-backend-proxy", "seed-cache-socache-dbm",
+            "seed-proxy-protocol-v1-tcp4", "seed-proxy-protocol-v1-tcp6",
+            "seed-proxy-protocol-v1-unknown", "seed-proxy-protocol-v1-split",
+            "seed-proxy-protocol-v2-tcp4", "seed-proxy-protocol-v2-tcp6-split",
+            "seed-proxy-protocol-v2-local", "seed-proxy-protocol-v2-oversize",
+            "seed-h2-large-data",
         }.issubset(first))
         for data in first.values():
             decoded = REPLAY.parse_fuzzer_input(data)
@@ -144,6 +149,34 @@ class CorpusTests(unittest.TestCase):
         vhost_seed = REPLAY.parse_fuzzer_input(first["seed-vhost-userdir"])
         self.assertEqual(vhost_seed.packets[0].count(b"Host:"), 1)
         self.assertIn(b"Host: blue.vhost.fuzz.test\r\n", vhost_seed.packets[0])
+        h2_large = REPLAY.parse_fuzzer_input(first["seed-h2-large-data"])
+        self.assertEqual(len(h2_large.packets), 1)
+        self.assertEqual(len(h2_large.packets[0]), 8080)
+        self.assertTrue(h2_large.packets[0].startswith(
+            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"))
+        self.assertIn(b"A" * 8001, h2_large.packets[0])
+        proxy_v1 = REPLAY.parse_fuzzer_input(
+            first["seed-proxy-protocol-v1-split"])
+        proxy_v1_header = b"PROXY TCP4 192.0.2.1 198.51.100.2 12345 5835\r\n"
+        self.assertEqual([len(packet) for packet in proxy_v1.packets[:2]],
+                         [15, len(proxy_v1_header) - 15])
+        self.assertTrue(proxy_v1.packets[2].startswith(
+            b"GET /index.txt HTTP/1.1\r\n"))
+        proxy_unknown = REPLAY.parse_fuzzer_input(
+            first["seed-proxy-protocol-v1-unknown"])
+        self.assertEqual([len(packet) for packet in proxy_unknown.packets[:2]],
+                         [15, 5])
+        self.assertEqual(b"".join(proxy_unknown.packets[:2]),
+                         b"PROXY UNKNOWN fuzz\r\n")
+        self.assertTrue(proxy_unknown.packets[2].startswith(
+            b"GET /index.txt HTTP/1.1\r\n"))
+        proxy_v2 = REPLAY.parse_fuzzer_input(
+            first["seed-proxy-protocol-v2-tcp6-split"])
+        self.assertEqual([len(packet) for packet in proxy_v2.packets[:3]],
+                         [15, 1, 36])
+        self.assertEqual(proxy_v2.packets[0][:12], b"\r\n\r\n\0\r\nQUIT\n")
+        self.assertTrue(proxy_v2.packets[3].startswith(
+            b"GET /index.txt HTTP/1.1\r\n"))
 
     def test_generator_writes_named_seeds(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -160,7 +193,7 @@ class ConfigMatrixTests(unittest.TestCase):
         text = (ROOT / "fuzz-configs.conf.in").read_text()
         identifiers = [int(value) for value in re.findall(
             r"^<IfDefine FUZZ_CONFIG_(\d+)>", text, re.MULTILINE)]
-        self.assertEqual(identifiers, list(range(1, 35)))
+        self.assertEqual(identifiers, list(range(1, 36)))
 
     def test_expansion_exercises_distinct_module_paths(self):
         text = (ROOT / "fuzz-configs.conf.in").read_text()
@@ -184,6 +217,7 @@ class ConfigMatrixTests(unittest.TestCase):
             33: ("SSLProxyEngine On", "https://[::1]:@BACKEND_PORT@/",
                  "SSLSessionCache \"dbm:"),
             34: ("CacheSocache \"dbm:", "CacheEnable socache /socache/"),
+            35: ("RemoteIPProxyProtocol On",),
         }
         for config, directives in expected.items():
             for directive in directives:
@@ -215,7 +249,7 @@ class ConfigMatrixTests(unittest.TestCase):
     def test_command_scripts_accept_the_complete_matrix(self):
         for name in ("build.sh", "run.sh", "status.sh", "genreport.sh"):
             text = (ROOT / name).read_text()
-            self.assertRegex(text, r"(?m)^MAX_CONFIG=34$")
+            self.assertRegex(text, r"(?m)^MAX_CONFIG=35$")
 
         run_source = (ROOT / "run.sh").read_text()
         self.assertIn("handle_segv=2", run_source)

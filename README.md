@@ -18,7 +18,7 @@ headers are required.
 ./run.sh -c=1
 ```
 
-`-c=a` or `-c=all` selects all 34 builds. `-r` reinstalls an existing build,
+`-c=a` or `-c=all` selects all 35 builds. `-r` reinstalls an existing build,
 `-p` leaves out the fuzz module, and `-j` uses four build jobs. As in the 389
 interface, `run.sh --fuzz` runs the server without starting libFuzzer.
 Add `--multiprocess` (or `-m`) to start three Apache worker processes. The
@@ -40,15 +40,17 @@ Byte zero is a flag byte:
 
 With bit 1 clear, bytes 1 onward are sent as one packet. With it set, the rest
 is a sequence of `uint16` big-endian nonzero length followed by that many raw
-bytes. Inputs may contain at most 64 packets. The generated corpus contains 86
+bytes. Inputs may contain at most 64 packets. The generated corpus contains 95
 deterministic seeds for parser boundaries, pipelining, chunked bodies, request
 smuggling boundaries, form auth and sessions, DAV, native proxy protocols,
 filters, caches, CGI/SSI, h2c control frames, WebSockets, TLS variants, authz,
-translation maps, balancers, error subrequests, and character conversion. The
-chunked seeds bracket the signed `apr_off_t` limit, cover the separate width
+translation maps, balancers, PROXY protocol v1/v2, error subrequests, and
+character conversion. The chunked seeds bracket the signed `apr_off_t` limit,
+cover the separate width
 rejection, and retain valid extension and trailer syntax; focused TRACE and
 ALPN seeds cover chunked TRACE bodies, header enumeration, `Max-Forwards`
-boundaries, and the 255-byte ALPN protocol-name boundary.
+boundaries, the 255-byte ALPN protocol-name boundary, and a valid HTTP/2 DATA
+stream crossing the 8 KB socket-bucket boundary.
 
 Replay a corpus or crash input without starting libFuzzer:
 
@@ -96,6 +98,7 @@ Replay a corpus or crash input without starting libFuzzer:
 | 32 | ISO-8859-1 to UTF-8 reflector input/output conversion | event |
 | 33 | full TLS proxy handshakes, HTTPS backend requests, and DBM TLS sessions | event |
 | 34 | DBM-backed shared response caching and cache-key handling | event |
+| 35 | PROXY protocol v1/v2 parsing and remote client addresses | event |
 
 Each config listens on `[::1]:5800+N`; local proxy backends use
 `[::1]:6800+N`. The forward proxy denies every destination except its matching
