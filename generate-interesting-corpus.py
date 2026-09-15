@@ -337,6 +337,45 @@ def corpus_seeds():
                 "Content-Type: application/x-www-form-urlencoded", "Content-Length: 17"),
                 b"a=one&b=two%00end"),
             request("GET", "/include.shtml"), flags=0x07),
+        "seed-cgi-response-matrix": multipacket(
+            request("GET", "/cgi-bin/response.cgi/reflect", (
+                "X-Fuzz-CGI-1: Status: 202 Accepted",
+                "X-Fuzz-CGI-2: Content-Type: text/plain",
+                "X-Fuzz-CGI-3: Set-Cookie: reflected=1; Path=/",
+                "X-Fuzz-CGI-4: X-Reflected-CGI: fuzz")),
+            request("GET", "/cgi-bin/response.cgi/headers?x=1", (
+                "Authorization: Basic ZnV6ejpmdXp6", "Cookie: fuzz=one; fuzz=two",
+                "Proxy: http://example.invalid/")),
+            request("GET", "/cgi-bin/response.cgi/conditional", (
+                'If-None-Match: "cgi-fuzz"',
+                "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT")),
+            request("POST", "/cgi-bin/response.cgi/internal", (
+                "Content-Type: text/plain", "Content-Length: 4"), b"fuzz"),
+            request("GET", "/cgi-bin/response.cgi/external"),
+            request("GET", "/cgi-bin/response.cgi/explicit"), flags=0x07),
+        "seed-cgi-response-errors": multipacket(
+            request("GET", "/cgi-bin/response.cgi/invalid-status"),
+            request("GET", "/cgi-bin/response.cgi/invalid-date"),
+            request("GET", "/cgi-bin/response.cgi/malformed"), flags=0x07),
+        "seed-cgi-partial-output": raw(
+            request("GET", "/cgi-bin/response.cgi/partial")),
+        "seed-cgi-empty-output": raw(
+            request("GET", "/cgi-bin/response.cgi/empty")),
+        "seed-cgi-nph-ssi": multipacket(
+            request("GET", "/cgi.shtml?source=fuzz"),
+            request("GET", "/cgi-bin/nph-response.cgi", ("Connection: close",)),
+            flags=0x07),
+        "seed-cgi-body-split": multipacket(
+            request("POST", "/cgi-bin/echo.cgi", (
+                "Content-Type: application/octet-stream", "Content-Length: 9000")),
+            b"A", b"B" * 8191, b"C" * 808, flags=0x02),
+        "seed-cgi-body-chunked": multipacket(
+            request("POST", "/cgi-bin/echo.cgi", (
+                "Transfer-Encoding: chunked", "Trailer: X-CGI-Trailer",
+                "Content-Type: application/octet-stream")),
+            b"1;first=yes\r\nA\r\n",
+            b"1fff;second=boundary\r\n" + b"B" * 8191 + b"\r\n",
+            b"0\r\nX-CGI-Trailer: complete\r\n\r\n", flags=0x02),
         "seed-ssi-actions": multipacket(
             request("GET", "/complex.shtml", (
                 "Accept-Encoding: gzip", "X-Fuzz-SSI: <!--#echo var=REQUEST_METHOD -->")),

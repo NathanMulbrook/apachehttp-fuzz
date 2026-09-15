@@ -40,12 +40,15 @@ Byte zero is a flag byte:
 
 With bit 1 clear, bytes 1 onward are sent as one packet. With it set, the rest
 is a sequence of `uint16` big-endian nonzero length followed by that many raw
-bytes. Inputs may contain at most 64 packets. The generated corpus contains 95
+bytes. Inputs may contain at most 64 packets. The generated corpus contains 102
 deterministic seeds for parser boundaries, pipelining, chunked bodies, request
 smuggling boundaries, form auth and sessions, DAV, native proxy protocols,
 filters, caches, CGI/SSI, h2c control frames, WebSockets, TLS variants, authz,
 translation maps, balancers, PROXY protocol v1/v2, error subrequests, and
-character conversion. The chunked seeds bracket the signed `apr_off_t` limit,
+character conversion. CGI seeds cover fixed and chunked request bodies, path
+information, authorization export, response headers, redirects, conditional
+responses, malformed output, NPH responses, and SSI execution. The chunked
+seeds bracket the signed `apr_off_t` limit,
 cover the separate width
 rejection, and retain valid extension and trailer syntax; focused TRACE and
 ALPN seeds cover chunked TRACE bodies, header enumeration, `Max-Forwards`
@@ -82,7 +85,7 @@ Replay a corpus or crash input without starting libFuzzer:
 | 16 | CGI, Actions, and server-side includes | event |
 | 17 | status, info, and reflector handlers | event |
 | 18 | threaded h2c, push, WebSockets, and control frames | worker |
-| 19 | prefork DAV, rewrite, and HTTP/0.9 | prefork |
+| 19 | prefork CGI, DAV, rewrite, and HTTP/0.9 | prefork |
 | 20 | combined h2c, rewrite, cache, filters, HTTP/AJP/FCGI/SCGI/UWSGI proxy | event |
 | 21 | anonymous/file authentication and group/file-owner authorization | event |
 | 22 | buffered request/response bodies, reflector headers, and rate limiting | event |
@@ -99,6 +102,9 @@ Replay a corpus or crash input without starting libFuzzer:
 | 33 | full TLS proxy handshakes, HTTPS backend requests, and DBM TLS sessions | event |
 | 34 | DBM-backed shared response caching and cache-key handling | event |
 | 35 | PROXY protocol v1/v2 parsing and remote client addresses | event |
+
+Config 16 exercises `mod_cgid` under event MPM. Config 19 applies the same CGI
+fixtures to in-process `mod_cgi` under prefork MPM.
 
 Each config listens on `[::1]:5800+N`; local proxy backends use
 `[::1]:6800+N`. The forward proxy denies every destination except its matching

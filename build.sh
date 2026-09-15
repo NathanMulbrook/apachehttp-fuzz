@@ -360,9 +360,92 @@ EOF
         echo '#!/usr/bin/env bash'
         echo 'printf "Content-Type: text/plain\r\n\r\n"'
         echo 'printf "method=%s query=%s length=%s\n" "$REQUEST_METHOD" "$QUERY_STRING" "$CONTENT_LENGTH"'
-        echo 'dd bs=1 count="${CONTENT_LENGTH:-0}" 2>/dev/null || true'
+        echo 'if [ -n "${CONTENT_LENGTH:-}" ]; then'
+        echo '    dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null || true'
+        echo 'else'
+        echo '    cat'
+        echo 'fi'
     } >"$run_dir/cgi-bin/echo.cgi"
     chmod 0755 "$run_dir/cgi-bin/echo.cgi"
+
+    cat >"$run_dir/cgi-bin/response.cgi" <<'EOF'
+#!/usr/bin/env bash
+case "${PATH_INFO:-/headers}" in
+/reflect)
+    printf '%s\r\n' "${HTTP_X_FUZZ_CGI_1:-Content-Type: text/plain}"
+    if [ -n "${HTTP_X_FUZZ_CGI_2:-}" ]; then
+        printf '%s\r\n' "$HTTP_X_FUZZ_CGI_2"
+    fi
+    if [ -n "${HTTP_X_FUZZ_CGI_3:-}" ]; then
+        printf '%s\r\n' "$HTTP_X_FUZZ_CGI_3"
+    fi
+    if [ -n "${HTTP_X_FUZZ_CGI_4:-}" ]; then
+        printf '%s\r\n' "$HTTP_X_FUZZ_CGI_4"
+    fi
+    printf '\r\nfuzz\n'
+    ;;
+/headers)
+    printf 'Status: 201 Created\r\n'
+    printf 'Content-Type: Text/Plain; Charset=UTF-8   \r\n'
+    printf 'Content-Length: 4\r\n'
+    printf 'Content-Range: bytes 0-3/4\r\n'
+    printf 'Transfer-Encoding: identity\r\n'
+    printf 'ETag: "cgi-fuzz"\r\n'
+    printf 'Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n'
+    printf 'Set-Cookie: one=1; Path=/\r\n'
+    printf 'Set-Cookie: two=2; SameSite=Lax\r\n'
+    printf 'X-Fuzz-Merge: one\r\nX-Fuzz-Merge: two\r\n\r\nfuzz'
+    ;;
+/conditional)
+    printf 'Content-Type: text/plain\r\n'
+    printf 'ETag: "cgi-fuzz"\r\n'
+    printf 'Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\nconditional\n'
+    ;;
+/internal)
+    printf 'Location: /index.txt?from=cgi\r\n\r\nignored\n'
+    ;;
+/external)
+    printf 'Location: https://example.invalid/cgi-fuzz\r\n\r\nignored\n'
+    ;;
+/explicit)
+    printf 'Status: 302 Found\r\nLocation: /index.txt\r\n'
+    printf 'Content-Type: text/plain\r\n\r\nredirect body\n'
+    ;;
+/invalid-status)
+    printf 'Status: 999 Fuzz\r\nContent-Type: text/plain\r\n\r\ninvalid status\n'
+    ;;
+/invalid-date)
+    printf 'Content-Type: text/plain\r\nLast-Modified: fuzz-date\r\n\r\ninvalid date\n'
+    ;;
+/malformed)
+    printf 'Bad CGI header\r\nmore output\n'
+    ;;
+/partial)
+    printf 'Content-Type: text/plain\r\n'
+    ;;
+/empty)
+    ;;
+*)
+    printf 'Content-Type: text/plain\r\n\r\npath=%s\n' "$PATH_INFO"
+    ;;
+esac
+EOF
+    chmod 0755 "$run_dir/cgi-bin/response.cgi"
+
+    cat >"$run_dir/cgi-bin/nph-response.cgi" <<'EOF'
+#!/usr/bin/env bash
+printf 'HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\n'
+printf 'Content-Length: 3\r\nConnection: close\r\n\r\nnph'
+EOF
+    chmod 0755 "$run_dir/cgi-bin/nph-response.cgi"
+
+    cat >"$run_dir/htdocs/cgi.shtml" <<'EOF'
+<!--#exec cgi="/cgi-bin/echo.cgi" -->
+<!--#exec cgi="/cgi-bin/echo.cgi?query=fuzz" -->
+<!--#exec cgi="/cgi-bin/echo.cgi/path-info" -->
+<!--#exec cgi="/cgi-bin/nph-response.cgi" -->
+<!--#exec cmd="/bin/echo ssi-command-fuzz" -->
+EOF
 
     if [ "$BUILD_CONFIG" = 13 ] || [ "$BUILD_CONFIG" = 33 ]; then
         openssl req -x509 -newkey rsa:2048 -nodes \

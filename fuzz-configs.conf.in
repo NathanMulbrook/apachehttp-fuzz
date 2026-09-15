@@ -203,6 +203,9 @@
     ScriptAlias /cgi-bin/ "@RUN_DIR@/cgi-bin/"
     <Directory "@RUN_DIR@/cgi-bin">
         Options +ExecCGI
+        AcceptPathInfo On
+        CGIPassAuth On
+        CGIVar REQUEST_URI current-uri
         Require all granted
     </Directory>
     AddHandler cgi-script .cgi
@@ -253,6 +256,18 @@
         Dav On
         Require all granted
     </Directory>
+    ScriptAlias /cgi-bin/ "@RUN_DIR@/cgi-bin/"
+    <Directory "@RUN_DIR@/cgi-bin">
+        Options +ExecCGI
+        AcceptPathInfo On
+        CGIPassAuth On
+        CGIVar REQUEST_URI current-uri
+        Require all granted
+    </Directory>
+    AddHandler cgi-script .cgi
+    AddType text/html .shtml
+    AddOutputFilter INCLUDES .shtml
+    XBitHack Full
 </IfDefine>
 
 <IfDefine FUZZ_CONFIG_20>

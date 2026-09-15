@@ -37,7 +37,7 @@ class CorpusTests(unittest.TestCase):
         first = GENERATOR.corpus_seeds()
         second = GENERATOR.corpus_seeds()
         self.assertEqual(first, second)
-        self.assertEqual(len(first), 95)
+        self.assertEqual(len(first), 102)
         self.assertTrue({
             "seed-keepalive-wait", "seed-chunk-split", "seed-expect-continue",
             "seed-chunk-offt-max", "seed-chunk-offt-overflow",
@@ -62,6 +62,10 @@ class CorpusTests(unittest.TestCase):
             "seed-proxy-protocol-v2-tcp4", "seed-proxy-protocol-v2-tcp6-split",
             "seed-proxy-protocol-v2-local", "seed-proxy-protocol-v2-oversize",
             "seed-h2-large-data",
+            "seed-cgi-response-matrix", "seed-cgi-response-errors",
+            "seed-cgi-partial-output", "seed-cgi-empty-output",
+            "seed-cgi-nph-ssi", "seed-cgi-body-split",
+            "seed-cgi-body-chunked",
         }.issubset(first))
         for data in first.values():
             decoded = REPLAY.parse_fuzzer_input(data)
@@ -177,6 +181,32 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(proxy_v2.packets[0][:12], b"\r\n\r\n\0\r\nQUIT\n")
         self.assertTrue(proxy_v2.packets[3].startswith(
             b"GET /index.txt HTTP/1.1\r\n"))
+        cgi_matrix = REPLAY.parse_fuzzer_input(
+            first["seed-cgi-response-matrix"])
+        self.assertEqual(cgi_matrix.flags, 0x07)
+        self.assertEqual(len(cgi_matrix.packets), 6)
+        self.assertIn(b"X-Fuzz-CGI-1: Status: 202 Accepted\r\n",
+                      cgi_matrix.packets[0])
+        self.assertIn(b"If-None-Match: \"cgi-fuzz\"\r\n",
+                      cgi_matrix.packets[2])
+        cgi_ssi = REPLAY.parse_fuzzer_input(first["seed-cgi-nph-ssi"])
+        self.assertIn(b"GET /cgi.shtml?source=fuzz HTTP/1.1\r\n",
+                      cgi_ssi.packets[0])
+        cgi_errors = REPLAY.parse_fuzzer_input(
+            first["seed-cgi-response-errors"])
+        self.assertEqual(len(cgi_errors.packets), 3)
+        self.assertIn(b"/malformed", cgi_errors.packets[-1])
+        self.assertIn(b"/partial", first["seed-cgi-partial-output"])
+        self.assertIn(b"/empty", first["seed-cgi-empty-output"])
+        cgi_split = REPLAY.parse_fuzzer_input(first["seed-cgi-body-split"])
+        self.assertEqual([len(packet) for packet in cgi_split.packets[1:]],
+                         [1, 8191, 808])
+        self.assertIn(b"Content-Length: 9000\r\n", cgi_split.packets[0])
+        cgi_chunked = REPLAY.parse_fuzzer_input(
+            first["seed-cgi-body-chunked"])
+        self.assertEqual(cgi_chunked.flags, 0x02)
+        self.assertEqual(len(cgi_chunked.packets[2]), 8215)
+        self.assertTrue(cgi_chunked.packets[-1].endswith(b"\r\n\r\n"))
 
     def test_generator_writes_named_seeds(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -221,6 +251,12 @@ class ConfigMatrixTests(unittest.TestCase):
         }
         for config, directives in expected.items():
             for directive in directives:
+                self.assertIn(directive, blocks[config],
+                              f"config {config} is missing {directive}")
+
+        for config in (16, 19):
+            for directive in ("ScriptAlias /cgi-bin/", "CGIPassAuth On",
+                              "AddHandler cgi-script .cgi"):
                 self.assertIn(directive, blocks[config],
                               f"config {config} is missing {directive}")
 
