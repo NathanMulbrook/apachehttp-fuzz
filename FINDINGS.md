@@ -1,5 +1,35 @@
 # Fuzzing findings
 
+## September 17 campaign follow-up
+
+Config 35 had been starting Apache but had not entered fuzzing because its
+health request omitted the PROXY protocol line required by
+`RemoteIPProxyProtocol On`. The build now prepends `PROXY UNKNOWN fuzz` only to
+config 35's generated health request. After rebuilding and restarting the
+unchanged 35-config command, config 35 began fuzzing at about 22 inputs per
+second and the full campaign remained active.
+
+The newly active config produced three recovering UBSan diagnostics at
+`modules/metadata/mod_remoteip.c:1122`. A fresh single-process replay confirmed
+the trigger: connect to a PROXY-protocol listener, send no application bytes,
+and close the write side. The input filter reads an EOS bucket as
+`ptr == NULL, len == 0` and passes those values to `memcpy`. Nonempty 1-, 14-,
+and 15-byte partial headers did not report the issue, including when held past
+the request timeout; a valid PROXY header and HTTP request also remained clean.
+
+This is protocol-reachable C undefined behavior, but the copy length is zero
+and no memory access or state change was observed. Recovering UBSan left the
+server process alive; `halt_on_error=1` made the isolated process exit with
+status 1. There was no ASan report, native crash, memory corruption, code
+execution, or lasting availability effect. The condition requires
+`RemoteIPProxyProtocol On`, and no valid PROXY header or authentication is
+needed. Apache 2.4.68 and the locally cached `2.4.x` branch contain the same
+unconditional copy. Guarding `memcpy` with `if (len != 0)` removes the invalid
+call.
+
+No other new sanitizer source site or crash artifact appeared after the
+September 16 finding snapshot.
+
 ## September 14 sanitizer follow-up
 
 The expanded logs contain 201 recovering UBSan diagnostics, but still only
