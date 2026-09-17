@@ -492,6 +492,11 @@ build_software() {
                 -e "s/currentInput1/currentInput$BUILD_CONFIG/g" \
                 -e "s/0x4150465a00000001/0x4150465a000000$(printf '%02x' "$BUILD_CONFIG")/" \
                 modules/fuzzer/fuzzer.c
+            if [ "$BUILD_CONFIG" = 35 ]; then
+                sed -i \
+                    '/static const uint8_t healthRequest\[\] =/a\    "PROXY UNKNOWN fuzz\\r\\n"' \
+                    modules/fuzzer/fuzzer.c
+            fi
         fi
         ./buildconf
 
