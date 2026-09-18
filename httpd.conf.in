@@ -48,11 +48,11 @@ FileETag All
         MaxSpareThreads 16
     </IfDefine>
     <IfDefine FUZZ_MULTIPROCESS>
-        StartServers 3
-        ServerLimit 3
-        MaxRequestWorkers 48
+        StartServers 2
+        ServerLimit 2
+        MaxRequestWorkers 32
         MinSpareThreads 16
-        MaxSpareThreads 48
+        MaxSpareThreads 32
     </IfDefine>
 </IfModule>
 <IfModule mpm_worker_module>
@@ -67,11 +67,11 @@ FileETag All
         MaxSpareThreads 16
     </IfDefine>
     <IfDefine FUZZ_MULTIPROCESS>
-        StartServers 3
-        ServerLimit 3
-        MaxRequestWorkers 48
+        StartServers 2
+        ServerLimit 2
+        MaxRequestWorkers 32
         MinSpareThreads 16
-        MaxSpareThreads 48
+        MaxSpareThreads 32
     </IfDefine>
 </IfModule>
 <IfModule mpm_prefork_module>
@@ -84,11 +84,11 @@ FileETag All
         MaxSpareServers 1
     </IfDefine>
     <IfDefine FUZZ_MULTIPROCESS>
-        StartServers 3
-        ServerLimit 3
-        MaxRequestWorkers 3
-        MinSpareServers 2
-        MaxSpareServers 3
+        StartServers 2
+        ServerLimit 2
+        MaxRequestWorkers 2
+        MinSpareServers 1
+        MaxSpareServers 2
     </IfDefine>
 </IfModule>
 

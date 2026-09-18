@@ -31,7 +31,7 @@ for arg in "$@"; do
         echo "Usage: ./run.sh [--fuzz] [--packet] [--multiprocess] [--config=N|a|all] [--LOG_OUPTUT]"
         echo "  --config selects one configuration (1-$MAX_CONFIG) or all configurations."
         echo "  --fuzz runs Apache without the embedded fuzzer, matching the 389-ds interface."
-        echo "  --multiprocess starts three Apache workers with shared covbridge feedback."
+        echo "  --multiprocess starts two Apache workers with shared covbridge feedback."
         exit
         ;;
     esac

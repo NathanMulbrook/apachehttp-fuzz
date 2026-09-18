@@ -21,7 +21,7 @@ headers are required.
 `-c=a` or `-c=all` selects all 35 builds. `-r` reinstalls an existing build,
 `-p` leaves out the fuzz module, and `-j` uses four build jobs. As in the 389
 interface, `run.sh --fuzz` runs the server without starting libFuzzer.
-Add `--multiprocess` (or `-m`) to start three Apache worker processes. The
+Add `--multiprocess` (or `-m`) to start two Apache worker processes. The
 single-worker layout remains the default.
 
 Stop `run.sh` with Ctrl-C. Add `--packet` for rotating loopback pcaps and use
@@ -40,7 +40,7 @@ Byte zero is a flag byte:
 
 With bit 1 clear, bytes 1 onward are sent as one packet. With it set, the rest
 is a sequence of `uint16` big-endian nonzero length followed by that many raw
-bytes. Inputs may contain at most 64 packets. The generated corpus contains 102
+bytes. Inputs may contain at most 64 packets. The generated corpus contains 104
 deterministic seeds for parser boundaries, pipelining, chunked bodies, request
 smuggling boundaries, form auth and sessions, DAV, native proxy protocols,
 filters, caches, CGI/SSI, h2c control frames, WebSockets, TLS variants, authz,
@@ -115,7 +115,7 @@ substantially slower than the in-process personalities.
 ## Apache process model
 
 Apache's Unix MPMs are multiprocess. The default configs retain `ServerLimit 1`;
-`./run.sh --multiprocess` selects three workers without changing the directory,
+`./run.sh --multiprocess` selects two workers without changing the directory,
 log, corpus, or command layout.
 
 The fuzz build uses the guard backend adapted from the supplied covbridge 0.1
