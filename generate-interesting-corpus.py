@@ -203,6 +203,8 @@ def corpus_seeds():
     )
     proxy_v2_local = proxy_v2_signature + b"\x20\x00\x00\x00"
     proxy_v2_oversize = proxy_v2_signature + b"\x21\x11\x00\xd9"
+    proxy_v2_short_tcp4 = proxy_v2_signature + b"\x21\x11\x00\x00"
+    proxy_v2_short_tcp6 = proxy_v2_signature + b"\x21\x21\x00\x00"
 
     return {
         "seed-get-index": raw(get),
@@ -660,6 +662,10 @@ def corpus_seeds():
             proxy_v2_local + request("GET", "/index.txt")),
         "seed-proxy-protocol-v2-oversize": raw(
             proxy_v2_oversize + request("GET", "/index.txt")),
+        "seed-proxy-protocol-v2-short-tcp4": raw(
+            proxy_v2_short_tcp4 + request("GET", "/index.txt")),
+        "seed-proxy-protocol-v2-short-tcp6": raw(
+            proxy_v2_short_tcp6 + request("GET", "/index.txt")),
     }
 
 

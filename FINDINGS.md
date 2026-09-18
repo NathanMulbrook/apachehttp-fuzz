@@ -1,5 +1,79 @@
 # Fuzzing findings
 
+## September 18 impact follow-up
+
+The `mod_remoteip.c:1122` zero-length copy diagnostic does not have a
+demonstrated native memory-safety impact. Source review found no path from an
+Apache bucket to `ptr == NULL` with a nonzero length, and the accumulated copy
+remains bounded by the fixed PROXY-header buffer. Under recovering UBSan,
+18,561 empty-FIN triggers over ten seconds caused three one-time diagnostics
+but all 1,823 concurrent health requests succeeded and no worker was replaced.
+With `UBSAN_OPTIONS=halt_on_error=1`, repeated triggers terminated whole worker
+processes: the parent replaced them, concurrent requests failed temporarily,
+and steady service returned about two seconds after the trigger stopped. This
+is relevant to hardened builds that make UBSan fatal, but it did not terminate
+the parent or produce a persistent outage.
+
+The uninstrumented Fedora 42 `httpd-2.4.66-1.fc42` package and an independent
+Clang `-O2` Apache 2.4.68 build did not crash or replace workers over more than
+150,000 combined empty-FIN connections. The packaged server completed 255/255
+health requests during a sustained test. Its observable native effect was one
+error-log entry per connection, about 1.11 MiB/s at the local test rate, plus
+ordinary load-induced latency. No ASan report, native crash, corruption,
+request desynchronization, code execution, or persistent availability effect
+was found for the zero-length copy itself.
+
+The source review exposed a separate PROXY v2 length-validation issue. In
+Apache 2.4.68 and the current `2.4.x` branch, `remoteip_process_v2_header()`
+uses the TCP4 or TCP6 address union without first requiring the declared v2
+payload to contain the 12- or 36-byte address structure. A syntactically valid
+16-byte v2 header with a declared length of zero is therefore complete to the
+parser, while the address fields beyond that header contain stale or
+uninitialized pool data.
+
+This behavior affects identity consumers. Against the unmodified Fedora 42
+package, valid disallowed PROXY sources received HTTP 403 and valid
+`203.0.113.7` sources received HTTP 200 for a location protected by
+`Require ip 203.0.113.7`. After allocator warmup, 10/10 zero-length TCP4
+records sent immediately after an allowed record inherited that record's IP
+and port and also received HTTP 200. TCP6 tests likewise reused the preceding
+address and port in 9/9 steady-state pairs; the first three malformed records
+instead exposed unrelated allocator contents in the access log. A static
+response did not disclose the interpreted address to the client, so remote
+disclosure additionally requires an application or handler that reflects the
+client identity.
+
+This is a constrained authorization risk rather than a general direct-client
+bypass. A client that can send arbitrary complete PROXY records can already
+claim an allowed address. The demonstrated bypass matters when a trusted
+frontend can be induced to send an undersized backend PROXY record while the
+requester cannot choose a complete asserted identity. Apache fixed this on
+trunk in [commit `7c6129b51935`](https://github.com/apache/httpd/commit/7c6129b51935d9165241279637915eaf905c58f1)
+by rejecting TCP4 payloads shorter than 12 bytes and TCP6 payloads shorter than
+36 bytes; that commit closes upstream issue `#683` and is not present in the
+fetched `2.4.x` branch. This makes the issue a
+known upstream duplicate, although the tested stable releases remain affected.
+Two focused corpus inputs now cover the zero-length TCP4 and TCP6 cases.
+
+The overnight 35-config campaign ended at 06:15 after systemd recorded an OOM
+kill at a 63.9 GiB peak. Before stopping it reached 278,570 corpus files and 210
+recovering UBSan reports at the same four already classified source sites: 99
+chunk shifts, 99 TRACE callback mismatches, nine mod_ssl callback mismatches,
+and three zero-length `mod_remoteip` copies. It produced no new ASan source site.
+
+The OOM evidence does not show a target memory leak. Thirty-four LibFuzzer
+controller processes reached a stable high-water RSS between 0.89 and 1.23 GiB
+and then reported the same value for at least 573,000 further executions; the
+remaining controller also plateaued during its later log segment. Each process
+had independently loaded the shared 265,266-file, 449 MB corpus at startup.
+The kernel's global OOM table attributed 53.84 GiB RSS to 177 campaign `httpd`
+processes and another 26.98 GiB to three unrelated Python processes, with swap
+exhausted. The campaign was selected with `oom_score_adj=200`. This supports
+aggregate sanitizer, corpus, and process overhead under system-wide pressure,
+not unbounded per-request growth. Multiprocess mode now starts two workers per
+configuration instead of three, removing 35 sanitized workers while preserving
+cross-process coverage feedback and the existing command interface.
+
 ## September 17 campaign follow-up
 
 Config 35 had been starting Apache but had not entered fuzzing because its

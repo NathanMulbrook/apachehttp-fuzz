@@ -37,7 +37,7 @@ class CorpusTests(unittest.TestCase):
         first = GENERATOR.corpus_seeds()
         second = GENERATOR.corpus_seeds()
         self.assertEqual(first, second)
-        self.assertEqual(len(first), 102)
+        self.assertEqual(len(first), 104)
         self.assertTrue({
             "seed-keepalive-wait", "seed-chunk-split", "seed-expect-continue",
             "seed-chunk-offt-max", "seed-chunk-offt-overflow",
@@ -61,6 +61,8 @@ class CorpusTests(unittest.TestCase):
             "seed-proxy-protocol-v1-unknown", "seed-proxy-protocol-v1-split",
             "seed-proxy-protocol-v2-tcp4", "seed-proxy-protocol-v2-tcp6-split",
             "seed-proxy-protocol-v2-local", "seed-proxy-protocol-v2-oversize",
+            "seed-proxy-protocol-v2-short-tcp4",
+            "seed-proxy-protocol-v2-short-tcp6",
             "seed-h2-large-data",
             "seed-cgi-response-matrix", "seed-cgi-response-errors",
             "seed-cgi-partial-output", "seed-cgi-empty-output",
@@ -181,6 +183,16 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(proxy_v2.packets[0][:12], b"\r\n\r\n\0\r\nQUIT\n")
         self.assertTrue(proxy_v2.packets[3].startswith(
             b"GET /index.txt HTTP/1.1\r\n"))
+        proxy_v2_signature = b"\r\n\r\n\0\r\nQUIT\n"
+        for name, family in (
+                ("seed-proxy-protocol-v2-short-tcp4", 0x11),
+                ("seed-proxy-protocol-v2-short-tcp6", 0x21)):
+            short_proxy_v2 = REPLAY.parse_fuzzer_input(first[name])
+            self.assertEqual(short_proxy_v2.flags, 0x00)
+            self.assertEqual(len(short_proxy_v2.packets), 1)
+            self.assertTrue(short_proxy_v2.packets[0].startswith(
+                proxy_v2_signature + bytes([0x21, family]) + b"\x00\x00"
+                b"GET /index.txt HTTP/1.1\r\n"))
         cgi_matrix = REPLAY.parse_fuzzer_input(
             first["seed-cgi-response-matrix"])
         self.assertEqual(cgi_matrix.flags, 0x07)
