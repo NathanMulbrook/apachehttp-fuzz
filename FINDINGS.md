@@ -61,18 +61,24 @@ recovering UBSan reports at the same four already classified source sites: 99
 chunk shifts, 99 TRACE callback mismatches, nine mod_ssl callback mismatches,
 and three zero-length `mod_remoteip` copies. It produced no new ASan source site.
 
-The OOM evidence does not show a target memory leak. Thirty-four LibFuzzer
-controller processes reached a stable high-water RSS between 0.89 and 1.23 GiB
-and then reported the same value for at least 573,000 further executions; the
-remaining controller also plateaued during its later log segment. Each process
-had independently loaded the shared 265,266-file, 449 MB corpus at startup.
-The kernel's global OOM table attributed 53.84 GiB RSS to 177 campaign `httpd`
-processes and another 26.98 GiB to three unrelated Python processes, with swap
-exhausted. The campaign was selected with `oom_score_adj=200`. This supports
-aggregate sanitizer, corpus, and process overhead under system-wide pressure,
-not unbounded per-request growth. Multiprocess mode now starts two workers per
-configuration instead of three, removing 35 sanitized workers while preserving
-cross-process coverage feedback and the existing command interface.
+The OOM evidence does not show a target memory leak. Most LibFuzzer controllers
+reached a stable high-water RSS between about 0.75 and 1.04 GiB after corpus
+initialization and reload, then reported the same peak for hundreds of thousands
+of further executions. Each process had independently loaded the shared
+265,266-file, 449 MB corpus at startup. The kernel's global OOM table attributed
+52.49 GiB RSS to 171 campaign `httpd` processes; all 177 `httpd` processes on
+the host accounted for 53.84 GiB. Three unrelated Python processes used another
+26.98 GiB, and swap was exhausted. The kernel selected a campaign process with
+`oom_score_adj=200`. This supports aggregate sanitizer, corpus, and process
+overhead under system-wide pressure, not unbounded per-request growth. The
+overnight campaign disables LeakSanitizer, but a separate config 35 check ran
+10,000 alternating valid and zero-length TCP4 PROXY records with leak detection
+enabled. Single-process RSS warmed from 73 MiB to 174 MiB by request 5,000 and
+then changed by only 0.6 MiB through request 10,000; Apache exited normally with
+no LeakSanitizer or ASan report. This rules out sustained per-request growth in
+the targeted path under that bounded test. Multiprocess mode now starts two
+workers per configuration instead of three, removing 35 sanitized workers while
+preserving cross-process coverage feedback and the existing command interface.
 
 ## September 17 campaign follow-up
 
