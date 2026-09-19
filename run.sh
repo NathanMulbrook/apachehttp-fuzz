@@ -102,25 +102,32 @@ log_config_error() {
 stop_pid_file() {
     local pid_file="$1"
     local expected="$2"
-    local pid
+    local pid=""
     local executable
     local attempt
 
     [ -f "$pid_file" ] || return 0
-    read -r pid <"$pid_file" || return 0
+    read -r pid <"$pid_file" || true
     case "$pid" in
-    *[!0-9]* | "") return 0 ;;
+    *[!0-9]* | "")
+        rm -f -- "$pid_file" || return 1
+        return 0
+        ;;
     esac
     executable="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
-    if [ "$executable" = "$expected" ]; then
+    if [ "${executable% (deleted)}" = "$expected" ]; then
         kill -TERM "$pid" 2>/dev/null || true
         for attempt in {1..50}; do
-            kill -0 "$pid" 2>/dev/null || return
+            if ! kill -0 "$pid" 2>/dev/null; then
+                rm -f -- "$pid_file" || return 1
+                return 0
+            fi
             sleep 0.1
         done
         echo "Timed out stopping existing process $pid for $expected." >&2
         return 1
     fi
+    rm -f -- "$pid_file"
 }
 
 _term() {

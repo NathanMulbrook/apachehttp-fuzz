@@ -328,6 +328,59 @@ class ConfigMatrixTests(unittest.TestCase):
             self.assertEqual(marker.read_text(), "active log\n")
             self.assertFalse((logs / "old").exists())
 
+    def test_stale_reused_pid_is_removed_without_signaling_process(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            script = temporary / "run.sh"
+            shutil.copy2(ROOT / "run.sh", script)
+            shutil.copy2(ROOT / "logrotate.conf", temporary / "logrotate.conf")
+            script.chmod(0o755)
+
+            fake_bin = temporary / "fake-bin"
+            fake_bin.mkdir()
+            logrotate = fake_bin / "logrotate"
+            logrotate.write_text("#!/bin/sh\nexit 0\n")
+            logrotate.chmod(0o755)
+
+            run_dir = temporary / "run" / "run_1"
+            (run_dir / "bin").mkdir(parents=True)
+            (run_dir / "conf").mkdir()
+            (run_dir / "logs").mkdir()
+            (run_dir / "conf" / "httpd.conf").write_text("test\n")
+            marker = temporary / "started"
+            httpd = run_dir / "bin" / "httpd"
+            httpd.write_text(
+                "#!/bin/sh\ntouch \"$START_MARKER\"\n"
+                "trap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n")
+            httpd.chmod(0o755)
+
+            unrelated = subprocess.Popen(
+                [shutil.which("sleep"), "30"], start_new_session=True)
+            pid_file = run_dir / "logs" / "httpd.pid"
+            pid_file.write_text(f"{unrelated.pid}\n")
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+            environment["START_MARKER"] = str(marker)
+            launcher = subprocess.Popen(
+                [str(script), "--config=1"], env=environment,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                start_new_session=True)
+            try:
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(marker.exists())
+                self.assertIsNone(launcher.poll())
+                self.assertIsNone(unrelated.poll())
+                self.assertFalse(pid_file.exists())
+            finally:
+                if launcher.poll() is None:
+                    os.killpg(launcher.pid, signal.SIGTERM)
+                launcher.communicate(timeout=10)
+                if unrelated.poll() is None:
+                    unrelated.terminate()
+                unrelated.wait(timeout=5)
+
     def test_campaign_lock_rejects_concurrent_launcher(self):
         with tempfile.TemporaryDirectory() as temporary:
             temporary = Path(temporary)
