@@ -156,7 +156,10 @@ sanitizer report while the other configurations continue. Before sending an
 input, the controller writes its exact binary form to
 `logs/currentInputN-PID`. It removes the file only after coverage is imported;
 a worker crash, coverage timeout, or controller failure therefore leaves the
-input for replay. `status.sh` reports the number of preserved inputs.
+input for replay. `status.sh` reports the number of preserved inputs. A
+recovering sanitizer report does not preserve this file after the input
+finishes, so independently reproduce it before attributing it to a nearby
+`testCasesN` timestamp.
 
 The covbridge-derived files retain their MIT terms in `covbridge-LICENSE`. The
 supplied `covbridge-source.zip` was treated as a read-only source artifact.

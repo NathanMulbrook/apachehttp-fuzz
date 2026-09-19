@@ -50,8 +50,12 @@ static void waitForChild(pid_t child) {
 
 int main(void) {
   const uint8_t input[] = {'A', 'B', 'C'};
+  const uint8_t baselineInput[] = {'Z'};
+  cb_snapshot baseline = {0};
   cb_snapshot snapshot = {0};
+  uint64_t baselineRun;
   uint64_t firstRun;
+  uint64_t isolationRun;
   uint64_t staleRun;
   uint64_t recoveredRun;
   uint64_t raceRun;
@@ -114,11 +118,19 @@ int main(void) {
   assert(errno == ESTALE);
   assert(cb_cancel(recoveredRun) == 0);
 
+  /* Record the exact feedback for run B before exercising the boundary. */
+  assert(cb_begin(&baselineRun) == 0);
+  assert(cb_connection_begin() == baselineRun);
+  covbridgeTestWorkload(baselineInput, sizeof(baselineInput));
+  assert(cb_connection_end(baselineRun) == 0);
+  assert(cb_wait_snapshot(baselineRun, &baseline, 1000) == 0);
+
   /* Hold the last close after its gate transition but before it publishes
-     completion. Admission must already be closed throughout this interval. */
+     completion. Admission must already be closed throughout this interval.
+     The main thread deliberately retains run A in thread-local state. */
   assert(cb_begin(&raceRun) == 0);
   assert(cb_connection_begin() == raceRun);
-  cb_thread_pause();
+  covbridgeTestWorkload(input, sizeof(input));
   atomic_store_explicit(&lastCloseReached, 0, memory_order_relaxed);
   atomic_store_explicit(&releaseLastClose, 0, memory_order_relaxed);
   atomic_store_explicit(&holdLastClose, 1, memory_order_release);
@@ -136,7 +148,24 @@ int main(void) {
   atomic_store_explicit(&holdLastClose, 0, memory_order_release);
   assert(cb_wait_snapshot(raceRun, &snapshot, 1000) == 0);
 
+  /* Run B starts with zeroed counters. Work attempted with the retained run A
+     tag must not alter B before a proper B connection contributes feedback. */
+  assert(cb_begin(&isolationRun) == 0);
+  covbridgeTestWorkload(input, sizeof(input));
+  assert(cb_connection_begin() == isolationRun);
+  covbridgeTestWorkload(baselineInput, sizeof(baselineInput));
+  assert(cb_connection_end(isolationRun) == 0);
+  assert(cb_wait_snapshot(isolationRun, &snapshot, 1000) == 0);
+  assert(snapshot.layout_id == baseline.layout_id);
+  assert(snapshot.mode == baseline.mode);
+  assert(snapshot.nslots == baseline.nslots);
+  for (index = 0; index < snapshot.nslots; index++) {
+    assert(snapshot.counts[index] == baseline.counts[index]);
+  }
+
+  cb_snapshot_free(&baseline);
   cb_snapshot_free(&snapshot);
-  puts("PASS covbridge shared feedback, atomic boundary, and recovery");
+  puts("PASS covbridge shared feedback, run isolation, atomic boundary, "
+       "and recovery");
   return 0;
 }

@@ -423,12 +423,15 @@ inputComplete:
             (unsigned long long)coverageRun, strerror(errno));
     _exit(2);
   }
+#endif
+  /* Keep this input current while late connection cleanup settles. */
+  usleep(ITERATION_DELAY_US);
+#ifndef APACHE_FUZZ_NO_APACHE
   if (removeCurrentInput() == -1) {
     fprintf(stderr, "could not remove completed input: %s\n", strerror(errno));
     _exit(2);
   }
 #endif
-  usleep(ITERATION_DELAY_US);
   return 0;
 }
 
